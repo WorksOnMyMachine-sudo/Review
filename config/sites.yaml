@@ -1,0 +1,163 @@
+# 机型与爬取 URL 配置
+
+defaults:
+  request_delay_seconds: 2.0
+  timeout_seconds: 45
+  user_agent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36"
+  # 运行 scripts/save_amazon_state.py 后可自动带上登录 Cookie
+  amazon_storage_state: "data/amazon_state.json"
+  # 日常自动爬取建议 true；仅 setup 时会临时打开有界面浏览器
+  amazon_playwright_headless: false
+  # 爬取前用 .env 自动续登；失效时需再执行一次 amazon setup
+  amazon_auto_login: false
+
+models:
+  - model_id: "S7S"
+    display_name: "S7S"
+    sites:
+      amazon_5:
+        enabled: true
+        url: "https://www.amazon.com/product-reviews/B0GRGHYNDZ/ref=cm_cr_arp_d_viewopt_srt?ie=UTF8&filterByStar=five_star&reviewerType=all_reviews&pageNumber=1&sortBy=recent#reviews-filter-bar"
+        max_pages: 1000
+      amazon_4:
+        enabled: true
+        url: "https://www.amazon.com/product-reviews/B0GRGHYNDZ/ref=cm_cr_arp_d_viewopt_srt?ie=UTF8&filterByStar=four_star&reviewerType=all_reviews&pageNumber=1&sortBy=recent#reviews-filter-bar"
+        max_pages: 1000
+      amazon_3:
+        enabled: true
+        url: "https://www.amazon.com/product-reviews/B0GRGHYNDZ/ref=cm_cr_arp_d_viewopt_srt?ie=UTF8&filterByStar=three_star&reviewerType=all_reviews&pageNumber=1&sortBy=recent#reviews-filter-bar"
+        max_pages: 1000
+      amazon_2:
+        enabled: true
+        url: "https://www.amazon.com/product-reviews/B0GRGHYNDZ/ref=cm_cr_arp_d_viewopt_srt?ie=UTF8&filterByStar=two_star&reviewerType=all_reviews&pageNumber=1&sortBy=recent#reviews-filter-bar"
+        max_pages: 1000
+      amazon_1:
+        enabled: true
+        url: "https://www.amazon.com/product-reviews/B0GRGHYNDZ/ref=cm_cr_arp_d_viewopt_srt?ie=UTF8&filterByStar=one_star&reviewerType=all_reviews&pageNumber=1&sortBy=recent#reviews-filter-bar"
+        max_pages: 1000
+      bby_50:
+        enabled: true
+        url: "https://www.bestbuy.com/product/hisense-50-class-s7-canvas-series-smart-google-tv-4k-qled-smart-google-tv-with-hi-matte-display-and-ultraslim-wall-mount-2026/J3Z9Z42HZZ/sku/6673876/reviews?ratings=5"
+        max_pages: 5
+      bby_55:
+        enabled: true
+        url: "https://www.bestbuy.com/product/hisense-55-class-s7-canvas-series-smart-google-tv-4k-qled-smart-google-tv-with-hi-matte-display-and-ultraslim-wall-mount-2026/J3Z9Z42HZ6/sku/6673874/reviews?ratings=5"
+        max_pages: 5
+      bby_65:
+        enabled: true
+        url: "https://www.bestbuy.com/product/hisense-65-class-s7-canvas-series-smart-google-tv-4k-qled-smart-google-tv-with-hi-matte-display-and-ultraslim-wall-mount-2026/J3Z9Z42HK4/sku/6673875/reviews?ratings=5"
+        max_pages: 5
+      bby_75:
+        enabled: true
+        url: "https://www.bestbuy.com/product/hisense-75-class-s7-canvas-series-smart-google-tv-4k-qled-smart-google-tv-with-hi-matte-display-and-ultraslim-wall-mount-2026/J3Z9Z42HKR/sku/6673873/reviews?ratings=1"
+        max_pages: 5
+      bby_85:
+        enabled: true
+        url: "https://www.bestbuy.com/product/hisense-85-class-s7-canvas-series-smart-google-tv-4k-qled-smart-google-tv-with-hi-matte-display-and-ultraslim-wall-mount-2026/J3Z9Z42HKG/sku/6673872/reviews?ratings=5"
+        max_pages: 5
+
+  # 每个机型可同时配置多个平台：
+  # amazon_5 / amazon_4 / amazon_3 / amazon_2 / amazon_1 分别抓 Amazon 不同星级评论。
+  # bby_55 / bby_65 / bby_75 / bby_85 填 Best Buy 不同尺寸的评论页 URL。
+  # enabled: true 且 url 非空时才会抓取；url 留空时会自动跳过。
+  - model_id: "U7S"
+    display_name: "U7S"
+    sites:
+      amazon_5:
+        enabled: true
+        url: "https://www.amazon.com/product-reviews/B0GR9NR9XV/ref=cm_cr_arp_d_viewopt_srt?ie=UTF8&filterByStar=five_star&reviewerType=all_reviews&pageNumber=1&sortBy=recent#reviews-filter-bar"
+        max_pages: 1000
+      amazon_4:
+        enabled: true
+        url: "https://www.amazon.com/product-reviews/B0GR9NR9XV/ref=cm_cr_arp_d_viewopt_srt?ie=UTF8&filterByStar=four_star&reviewerType=all_reviews&pageNumber=1&sortBy=recent#reviews-filter-bar"
+        max_pages: 1000
+      amazon_3:
+        enabled: true
+        url: "https://www.amazon.com/product-reviews/B0GR9NR9XV/ref=cm_cr_arp_d_viewopt_srt?ie=UTF8&filterByStar=three_star&reviewerType=all_reviews&pageNumber=1&sortBy=recent#reviews-filter-bar"
+        max_pages: 1000
+      amazon_2:
+        enabled: true
+        url: "https://www.amazon.com/product-reviews/B0GR9NR9XV/ref=cm_cr_arp_d_viewopt_srt?ie=UTF8&filterByStar=two_star&reviewerType=all_reviews&pageNumber=1&sortBy=recent#reviews-filter-bar"
+        max_pages: 1000
+      amazon_1:
+        enabled: true
+        url: "https://www.amazon.com/product-reviews/B0GR9NR9XV/ref=cm_cr_arp_d_viewopt_srt?ie=UTF8&filterByStar=one_star&reviewerType=all_reviews&pageNumber=1&sortBy=recent#reviews-filter-bar"
+        max_pages: 1000
+      bby_55:
+        enabled: true
+        url: "https://www.bestbuy.com/product/hisense-55-class-u7-series-miniled-qled-uhd-4k-hdr-smart-google-tv-2026/J3Z9Z42HQL/sku/6672764/reviews?ratings=5"
+        max_pages: 5
+      bby_65:
+        enabled: true
+        url: "https://www.bestbuy.com/product/hisense-65-class-u7-series-miniled-qled-uhd-4k-hdr-smart-google-tv-2026/J3Z9Z42HT2/sku/6672762/reviews?ratings=5"
+        max_pages: 5
+      bby_75:
+        enabled: true
+        url: "https://www.bestbuy.com/product/hisense-75-class-u7-series-miniled-qled-uhd-4k-hdr-smart-google-tv-2026/J3Z9Z42HH4/sku/6672760/reviews?ratings=5"
+        max_pages: 5
+      bby_85:
+        enabled: true
+        url: "https://www.bestbuy.com/product/hisense-85-class-u7-series-miniled-qled-uhd-4k-hdr-smart-google-tv-2026/J3Z9Z42HQQ/sku/6672761/reviews?ratings=5"
+        max_pages: 5
+
+  - model_id: "U6SF Pro"
+    display_name: "U6SF Pro"
+    sites:
+      amazon_5:
+        enabled: true
+        url: "https://www.amazon.com/product-reviews/B0GT4G294Y/ref=cm_cr_arp_d_viewopt_srt?ie=UTF8&filterByStar=five_star&reviewerType=all_reviews&pageNumber=1&sortBy=recent#reviews-filter-bar"
+        max_pages: 1000
+      amazon_4:
+        enabled: true
+        url: "https://www.amazon.com/product-reviews/B0GT4G294Y/ref=cm_cr_arp_d_viewopt_srt?ie=UTF8&filterByStar=four_star&reviewerType=all_reviews&pageNumber=1&sortBy=recent#reviews-filter-bar"
+        max_pages: 1000
+      amazon_3:
+        enabled: true
+        url: "https://www.amazon.com/product-reviews/B0GT4G294Y/ref=cm_cr_arp_d_viewopt_srt?ie=UTF8&filterByStar=three_star&reviewerType=all_reviews&pageNumber=1&sortBy=recent#reviews-filter-bar"
+        max_pages: 1000
+      amazon_2:
+        enabled: true
+        url: "https://www.amazon.com/product-reviews/B0GT4G294Y/ref=cm_cr_arp_d_viewopt_srt?ie=UTF8&filterByStar=two_star&reviewerType=all_reviews&pageNumber=1&sortBy=recent#reviews-filter-bar"
+        max_pages: 1000
+      amazon_1:
+        enabled: true
+        url: "https://www.amazon.com/product-reviews/B0GT4G294Y/ref=cm_cr_arp_d_viewopt_srt?ie=UTF8&filterByStar=one_star&reviewerType=all_reviews&pageNumber=1&sortBy=recent#reviews-filter-bar"
+        max_pages: 1000
+      bby_55:
+        enabled: true
+        url: ""
+        max_pages: 5
+      bby_65:
+        enabled: true
+        url: "https://www.bestbuy.com/product/hisense-65-class-u6-pro-miniled-series-qled-4k-uhd-smart-fire-tv-2026/J3Z9Z42WZZ/sku/6673625/reviews?ratings=4"
+        max_pages: 5
+      bby_75:
+        enabled: true
+        url: "https://www.bestbuy.com/product/hisense-75-class-u6-pro-miniled-series-qled-4k-uhd-smart-fire-tv-2026/J3Z9Z42WZ6/sku/6673624/reviews?ratings=5"
+        max_pages: 5
+      bby_85:
+        enabled: true
+        url: "https://www.bestbuy.com/product/hisense-85-class-u6-pro-miniled-series-qled-4k-uhd-smart-fire-tv-2026/J3Z9Z42WK4/sku/6673621/reviews?ratings=4"
+        max_pages: 5
+
+  - model_id: "32H40G"
+    display_name: "32H40G"
+    sites:
+      wmt:
+        enabled: true
+        # 填 Walmart 商品页 URL 或评论页 URL，例：
+        # https://www.walmart.com/ip/.../123456789
+        # https://www.walmart.com/reviews/product/123456789
+        url: "https://www.walmart.com/reviews/product/17280466107"
+        max_pages: 50
+
+  - model_id: "43H40G"
+    display_name: "43H40G"
+    sites:
+      wmt:
+        enabled: true
+        # 填 Walmart 商品页 URL 或评论页 URL，例：
+        # https://www.walmart.com/ip/.../123456789
+        # https://www.walmart.com/reviews/product/123456789
+        url: "https://www.walmart.com/reviews/product/17310022307"
+        max_pages: 50
