@@ -15,7 +15,7 @@ from pathlib import Path
 import pandas as pd
 import httpx
 from dotenv import load_dotenv
-from openpyxl.styles import Alignment, Font, PatternFill
+from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -278,6 +278,9 @@ def main() -> None:
         issue_matches = low_reviews.apply(lambda row: classify_review_keyword(row, issue_rules), axis=1)
     low_reviews["问题分类"] = issue_matches.map(lambda item: item[0])
     low_reviews["二级问题分类"] = issue_matches.map(lambda item: item[1])
+    low_reviews["分类理由"] = issue_matches.map(
+        lambda item: item[2] if len(item) > 2 else ""
+    )
     low_reviews["问题摘要中文"] = translate_summaries(low_reviews["问题摘要"].tolist())
 
     write_analysis(low_reviews, output_path, input_path, dedupe_stats, issue_rules, category_path)
@@ -468,11 +471,14 @@ def write_classification_template(
 ) -> None:
     output_path.parent.mkdir(parents=True, exist_ok=True)
     template_df = df.copy()
+    if "整体评分" not in template_df.columns:
+        template_df["整体评分"] = ""
+    template_df["尺寸"] = template_df.apply(extract_size, axis=1)
     template_df["_sort_date"] = template_df["评论日期"].map(parse_review_date)
     template_df["评论日期"] = template_df["评论日期"].map(format_review_date)
     template_df = template_df.sort_values(
-        by=["机型ID", "_sort_date"],
-        ascending=[True, False],
+        by=["机型ID", "尺寸", "_sort_date"],
+        ascending=[True, True, False],
         na_position="last",
         kind="stable",
     ).reset_index(drop=True)
@@ -485,8 +491,10 @@ def write_classification_template(
         "ReviewID",
         "机型ID",
         "机型名称",
+        "尺寸",
         "Channel",
         "来源站点",
+        "整体评分",
         "评分",
         "评论日期",
         "标题",
@@ -512,7 +520,7 @@ def write_classification_template(
             ["分类要求", "不要只按关键词匹配。请理解用户真实抱怨点，从 Call log 分类表中选择最合适的一级分类和二级分类。"],
             ["多问题处理", "如果一条评论包含多个问题，选择最能解释低评分的主要问题。"],
             ["无有效正文", "如果 review 没有可用抱怨内容，一级分类和二级分类都填 Other。"],
-            ["输出要求", "请在“待分类Reviews”sheet 中填写“一级分类_请填写”和“二级分类_请填写”，不要改 ReviewID。"],
+            ["输出要求", "请在“待分类Reviews”sheet 中填写“一级分类_请填写”和“二级分类_请填写”，不要改 ReviewID、机型和尺寸。"],
         ],
         columns=["项目", "说明"],
     )
@@ -525,8 +533,11 @@ def write_classification_template(
 
 
 def format_classification_template_workbook(workbook) -> None:
-    header_fill = PatternFill("solid", fgColor="00A651")
-    header_font = Font(color="FFFFFF", bold=True)
+    header_fill = PatternFill("solid", fgColor="00979B")
+    thin_side = Side(style="thin", color="B7C9CC")
+    table_border = Border(left=thin_side, right=thin_side, top=thin_side, bottom=thin_side)
+    body_font = Font(name="Microsoft YaHei", size=11)
+    header_font = Font(name="Microsoft YaHei", size=11, color="FFFFFF", bold=True)
     for sheet in workbook.worksheets:
         sheet.freeze_panes = "A2"
         for cell in sheet[1]:
@@ -535,15 +546,20 @@ def format_classification_template_workbook(workbook) -> None:
             set_cell_alignment(cell, vertical="center", wrap_text=True)
         for row in sheet.iter_rows(min_row=2):
             for cell in row:
+                cell.font = body_font
                 set_cell_alignment(cell, vertical="center", wrap_text=True)
         for column in range(1, sheet.max_column + 1):
             letter = get_column_letter(column)
             sheet.column_dimensions[letter].width = column_width(sheet, column)
+        apply_used_range_borders(sheet, table_border)
 
 
 def format_deduped_review_workbook(workbook) -> None:
-    header_fill = PatternFill("solid", fgColor="00A651")
-    header_font = Font(color="FFFFFF", bold=True)
+    header_fill = PatternFill("solid", fgColor="00979B")
+    thin_side = Side(style="thin", color="B7C9CC")
+    table_border = Border(left=thin_side, right=thin_side, top=thin_side, bottom=thin_side)
+    body_font = Font(name="Microsoft YaHei", size=11)
+    header_font = Font(name="Microsoft YaHei", size=11, color="FFFFFF", bold=True)
 
     for sheet in workbook.worksheets:
         sheet.freeze_panes = "A2"
@@ -554,11 +570,13 @@ def format_deduped_review_workbook(workbook) -> None:
 
         for row in sheet.iter_rows(min_row=2):
             for cell in row:
+                cell.font = body_font
                 set_cell_alignment(cell, vertical="center", wrap_text=True)
 
         for column in range(1, sheet.max_column + 1):
             letter = get_column_letter(column)
             sheet.column_dimensions[letter].width = column_width(sheet, column)
+        apply_used_range_borders(sheet, table_border)
 
 
 def normalize_dedupe_value(value) -> str:
@@ -592,10 +610,44 @@ def format_review_date(value) -> str:
     return parsed.strftime("%Y-%m-%d")
 
 
+def extract_size(row: pd.Series) -> str:
+    existing_size = row.get("尺寸")
+    if pd.notna(existing_size) and str(existing_size).strip():
+        return str(existing_size).strip()
+
+    sizes = "32|40|43|50|55|58|65|70|75|85|98|100"
+    source_pattern = re.compile(rf"(?:^|_)({sizes})(?:$|_)")
+    model_prefix_pattern = re.compile(rf"^({sizes})(?=[A-Z])", re.IGNORECASE)
+    text_pattern = re.compile(
+        rf"(?<!\d)({sizes})\s*(?:[\"”]|inch|inches|class|吋|寸)",
+        re.IGNORECASE,
+    )
+
+    for column, pattern in (
+        ("来源站点", source_pattern),
+        ("机型ID", model_prefix_pattern),
+        ("机型名称", model_prefix_pattern),
+    ):
+        value = row.get(column)
+        text = "" if pd.isna(value) else str(value)
+        match = pattern.search(text)
+        if match:
+            return f"{match.group(1)}寸"
+
+    for column in ("标题", "评论内容", "问题摘要"):
+        value = row.get(column)
+        text = "" if pd.isna(value) else str(value)
+        match = text_pattern.search(text)
+        if match:
+            return f"{match.group(1)}寸"
+
+    return "未知"
+
+
 def classify_reviews_semantic(
     df: pd.DataFrame,
     issue_rules: list[tuple[str, list[str]]],
-) -> list[tuple[str, str]]:
+) -> list[tuple[str, str, str]]:
     api_key = os.getenv("OPENAI_API_KEY", "").strip()
     if not api_key:
         raise RuntimeError(
@@ -642,7 +694,7 @@ def classify_batch_semantic(
     taxonomy: dict[str, list[str]],
     api_key: str,
     model: str,
-) -> list[tuple[str, str]]:
+) -> list[tuple[str, str, str]]:
     payload = {
         "model": model,
         "messages": [
@@ -653,9 +705,25 @@ def classify_batch_semantic(
                     "Read the full review meaning and the user's actual complaint. Do not classify by simple keyword matching. "
                     "Choose the single best primary category and secondary category. "
                     "The primary must be exactly one taxonomy key. The secondary must be exactly one item under that primary. "
-                    "If the review has no usable complaint text or no category fits, return primary 'Other' and secondary 'Other'. "
+                    "Never invent, rename, merge, or paraphrase taxonomy values. "
+                    "If the review has no usable complaint text, no specific issue can be determined, or no category fits, "
+                    "return primary 'Other' and secondary 'Please add comments'. "
                     "If multiple issues appear, choose the main issue that best explains the negative rating. "
-                    "Return only JSON array: [{\"id\":0,\"primary\":\"...\",\"secondary\":\"...\"}]."
+                    "Apply these boundaries strictly: "
+                    "(1) Power_on_Hardware / Cannot turn on may be used only when the reviewer explicitly says the TV "
+                    "cannot power on, the power button has no response, the TV cannot wake from standby, or the device "
+                    "is black and unable to start. Words such as 'stopped working', 'died', 'broken', or 'failed' are not "
+                    "enough by themselves. Do not use this category for a damaged screen, no picture with sound, a frozen "
+                    "system, an app failure, network failure, remote-control failure, or a return without an explicit "
+                    "power-on failure. Classify the actual described issue instead. "
+                    "(2) OTA_failure may be used only when the reviewer explicitly complains about the software, firmware, "
+                    "or OTA update process itself, such as failure to detect, download, install, complete, or an update "
+                    "that is stuck. Use OTA_failure / Cannot start after OTA only when an update failure or update process "
+                    "explicitly caused the TV not to start. If a problem merely appeared after a completed update, classify "
+                    "the actual resulting problem, not OTA_failure. "
+                    "For each review, provide a concise Simplified Chinese reason based on the review text. "
+                    "Return only a JSON array in this exact shape: "
+                    "[{\"id\":0,\"primary\":\"...\",\"secondary\":\"...\",\"reason\":\"...\"}]."
                 ),
             },
             {
@@ -693,20 +761,32 @@ def classify_batch_semantic(
         for item in parsed
         if isinstance(item, dict) and "id" in item
     }
-    return [by_id.get(row["id"], ("Other", "Other")) for row in rows]
+    return [
+        by_id.get(
+            row["id"],
+            ("Other", "Please add comments", "API 未返回有效分类结果"),
+        )
+        for row in rows
+    ]
 
 
 def validate_semantic_classification(
     item: dict,
     taxonomy: dict[str, list[str]],
-) -> tuple[str, str]:
+) -> tuple[str, str, str]:
     primary = str(item.get("primary", "")).strip()
     secondary = str(item.get("secondary", "")).strip()
+    reason = str(item.get("reason", "")).strip()
+    fallback_secondary = (
+        "Please add comments"
+        if "Please add comments" in taxonomy.get("Other", [])
+        else (taxonomy.get("Other", ["Other"])[0] if taxonomy.get("Other") else "Other")
+    )
     if primary not in taxonomy:
-        return "Other", "Other"
+        return "Other", fallback_secondary, reason or "返回的一级分类不在分类表中"
     if secondary not in taxonomy[primary]:
-        return primary, "Other"
-    return primary, secondary
+        return "Other", fallback_secondary, reason or "返回的二级分类不在分类表中"
+    return primary, secondary, reason
 
 
 def truncate_text(value, limit: int) -> str:
@@ -948,9 +1028,11 @@ def write_model_sheet(
         "评分",
         "评论日期",
         "问题分类",
-        "问题摘要",
+        "分类理由",
+        "评论内容",
         "问题摘要中文",
     ]
+    detail_cols = [col for col in detail_cols if col in model_df.columns]
     details = model_df.copy()
     details["_sort_date"] = details["评论日期"].map(parse_review_date)
     details["评论日期"] = details["评论日期"].map(format_review_date)
@@ -989,10 +1071,13 @@ def safe_sheet_name(name: str, max_len: int = 31) -> str:
 
 
 def format_workbook(workbook) -> None:
-    hisense_green = "00A651"
+    hisense_green = "00979B"
     header_fill = PatternFill("solid", fgColor=hisense_green)
-    header_font = Font(color="FFFFFF", bold=True)
-    title_font = Font(size=14, bold=True, color=hisense_green)
+    thin_side = Side(style="thin", color="B7C9CC")
+    table_border = Border(left=thin_side, right=thin_side, top=thin_side, bottom=thin_side)
+    body_font = Font(name="Microsoft YaHei", size=11)
+    header_font = Font(name="Microsoft YaHei", size=11, color="FFFFFF", bold=True)
+    title_font = Font(name="Microsoft YaHei", size=14, bold=True, color=hisense_green)
 
     for sheet in workbook.worksheets:
         sheet.freeze_panes = "A6" if sheet.title != "汇总" else "A2"
@@ -1010,24 +1095,11 @@ def format_workbook(workbook) -> None:
 
         for row in sheet.iter_rows():
             for cell in row:
+                cell.font = body_font
                 set_cell_alignment(cell, vertical="center", wrap_text=True)
                 if cell.row == 1 and cell.column == 1:
                     cell.font = title_font
-                if cell.value in {
-                    "问题分类",
-                    "问题数",
-                    "问题占比",
-                    "代表关键词",
-                    "机型ID",
-                    "机型名称",
-                    "Channel",
-                    "评分",
-                    "评论日期",
-                    "标题",
-                    "问题摘要",
-                    "问题摘要中文",
-                    "低分评论总数",
-                }:
+                if is_analysis_header_cell(cell.value):
                     cell.fill = header_fill
                     cell.font = header_font
 
@@ -1050,6 +1122,7 @@ def format_workbook(workbook) -> None:
 
         center_columns_by_header(sheet, {"问题分类", "问题数", "问题占比"})
         apply_column_number_formats(sheet)
+        apply_analysis_table_borders(sheet, table_border)
 
 
 def center_columns_by_header(sheet, headers_to_center: set[str]) -> None:
@@ -1137,6 +1210,55 @@ def table_data_end_row(sheet, data_start: int) -> int:
             return row_idx - 1
         row_idx += 1
     return sheet.max_row
+
+
+def apply_used_range_borders(sheet, border: Border) -> None:
+    for row in sheet.iter_rows(
+        min_row=1,
+        max_row=sheet.max_row,
+        min_col=1,
+        max_col=sheet.max_column,
+    ):
+        for cell in row:
+            cell.border = border
+
+
+def is_analysis_header_cell(value) -> bool:
+    return value in {
+        "问题分类",
+        "问题数",
+        "问题占比",
+        "代表关键词",
+        "机型ID",
+        "机型名称",
+        "Channel",
+        "评分",
+        "评论日期",
+        "分类理由",
+        "评论内容",
+        "问题摘要中文",
+        "低分评论总数",
+    }
+
+
+def apply_analysis_table_borders(sheet, border: Border) -> None:
+    for row in sheet.iter_rows():
+        if not any(is_analysis_header_cell(cell.value) for cell in row):
+            continue
+        populated_columns = [cell.column for cell in row if cell.value is not None]
+        if not populated_columns:
+            continue
+        start_column = min(populated_columns)
+        end_column = max(populated_columns)
+        end_row = table_data_end_row(sheet, row[0].row + 1)
+        for cells in sheet.iter_rows(
+            min_row=row[0].row,
+            max_row=end_row,
+            min_col=start_column,
+            max_col=end_column,
+        ):
+            for cell in cells:
+                cell.border = border
 
 
 def column_width(sheet, column: int) -> int:

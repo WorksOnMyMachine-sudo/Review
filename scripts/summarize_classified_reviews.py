@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import argparse
+import math
+import re
 import sys
 from datetime import datetime
 from pathlib import Path
 
 import pandas as pd
-from openpyxl.styles import Alignment, Font, PatternFill
+from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -22,6 +24,8 @@ REQUIRED_COLUMNS = {
     "来源站点",
     "评分",
     "评论日期",
+    "标题",
+    "评论内容",
     "问题摘要",
     "一级分类_请填写",
     "二级分类_请填写",
@@ -110,8 +114,43 @@ def load_classified_reviews(path: Path) -> pd.DataFrame:
     df["二级分类"] = df["二级分类_请填写"].fillna("").astype(str).str.strip()
     df["一级分类"] = df["一级分类"].replace("", "Other")
     df["二级分类"] = df["二级分类"].replace("", "Other")
+    df["尺寸"] = df.apply(extract_size, axis=1)
     df["评论日期"] = df["评论日期"].map(format_date)
     return df
+
+
+def extract_size(row: pd.Series) -> str:
+    existing_size = row.get("尺寸")
+    if pd.notna(existing_size) and str(existing_size).strip():
+        return str(existing_size).strip()
+
+    sizes = "32|40|43|50|55|58|65|70|75|85|98|100"
+    source_pattern = re.compile(rf"(?:^|_)({sizes})(?:$|_)")
+    model_prefix_pattern = re.compile(rf"^({sizes})(?=[A-Z])", re.IGNORECASE)
+    text_pattern = re.compile(
+        rf"(?<!\d)({sizes})\s*(?:[\"”]|inch|inches|class|吋|寸)",
+        re.IGNORECASE,
+    )
+
+    for column, pattern in (
+        ("来源站点", source_pattern),
+        ("机型ID", model_prefix_pattern),
+        ("机型名称", model_prefix_pattern),
+    ):
+        value = row.get(column)
+        text = "" if pd.isna(value) else str(value)
+        match = pattern.search(text)
+        if match:
+            return f"{match.group(1)}寸"
+
+    for column in ("标题", "评论内容", "问题摘要"):
+        value = row.get(column)
+        text = "" if pd.isna(value) else str(value)
+        match = text_pattern.search(text)
+        if match:
+            return f"{match.group(1)}寸"
+
+    return "未知"
 
 
 def format_date(value) -> str:
@@ -135,14 +174,16 @@ def write_summary_workbook(df: pd.DataFrame, output_path: Path, source_path: Pat
 
 def build_overview(df: pd.DataFrame) -> pd.DataFrame:
     rows = []
-    for model_id, model_df in df.groupby("机型ID", sort=False):
+    for (model_id, size), model_df in df.groupby(["机型ID", "尺寸"], sort=False):
         model_name = first_non_empty(model_df["机型名称"])
         total = len(model_df)
         counts = model_df["一级分类"].value_counts()
         for category, count in counts.items():
             rows.append(
                 {
+                    "机型ID": model_id,
                     "机型名称": model_name,
+                    "尺寸": size,
                     "一级分类": category,
                     "问题数": int(count),
                     "占比": count / total if total else 0,
@@ -160,33 +201,35 @@ def write_model_sheet(
 ) -> None:
     total = len(model_df)
     primary_summary = (
-        model_df.groupby("一级分类", sort=False)
+        model_df.groupby(["尺寸", "一级分类"], sort=False)
         .size()
         .reset_index(name="问题数")
-        .sort_values("问题数", ascending=False, kind="stable")
+        .sort_values(["尺寸", "问题数"], ascending=[True, False], kind="stable")
     )
     primary_summary["占比"] = primary_summary["问题数"] / total if total else 0
     primary_summary["低分评论总数"] = total
 
     secondary_summary = (
-        model_df.groupby(["一级分类", "二级分类"], sort=False)
+        model_df.groupby(["尺寸", "一级分类", "二级分类"], sort=False)
         .size()
         .reset_index(name="问题数")
-        .sort_values(["一级分类", "问题数"], ascending=[True, False], kind="stable")
+        .sort_values(["尺寸", "一级分类", "问题数"], ascending=[True, True, False], kind="stable")
     )
     secondary_summary["占比"] = secondary_summary["问题数"] / total if total else 0
 
     detail_cols = [
-        "ReviewID",
         "机型名称",
+        "尺寸",
         "Channel",
+        "整体评分",
         "评分",
         "评论日期",
         "一级分类",
         "二级分类",
-        "问题摘要",
+        "评论内容",
         "分类理由_可选",
     ]
+    detail_cols = [col for col in detail_cols if col in model_df.columns]
     details = model_df[detail_cols].copy()
     details["_sort_date"] = pd.to_datetime(details["评论日期"], errors="coerce")
     details = details.sort_values(
@@ -195,6 +238,7 @@ def write_model_sheet(
         na_position="last",
         kind="stable",
     ).drop(columns=["_sort_date"])
+    details.insert(0, "序号", range(1, len(details) + 1))
 
     sheet_name = safe_sheet_name(model_id)
     header = pd.DataFrame(
@@ -226,10 +270,13 @@ def safe_sheet_name(name: str, max_len: int = 31) -> str:
 
 
 def format_workbook(workbook) -> None:
-    hisense_green = "00A651"
+    hisense_green = "00979B"
     header_fill = PatternFill("solid", fgColor=hisense_green)
-    header_font = Font(color="FFFFFF", bold=True)
-    title_font = Font(size=14, bold=True, color=hisense_green)
+    thin_side = Side(style="thin", color="B7C9CC")
+    table_border = Border(left=thin_side, right=thin_side, top=thin_side, bottom=thin_side)
+    body_font = Font(name="Microsoft YaHei", size=11)
+    header_font = Font(name="Microsoft YaHei", size=11, color="FFFFFF", bold=True)
+    title_font = Font(name="Microsoft YaHei", size=14, bold=True, color=hisense_green)
 
     for sheet in workbook.worksheets:
         if sheet.title != "总表" and sheet.max_column > 1:
@@ -251,6 +298,7 @@ def format_workbook(workbook) -> None:
 
         for row in sheet.iter_rows():
             for cell in row:
+                cell.font = body_font
                 existing_horizontal = cell.alignment.horizontal
                 cell.alignment = Alignment(
                     horizontal=existing_horizontal,
@@ -263,6 +311,7 @@ def format_workbook(workbook) -> None:
 
         center_columns_by_header(sheet, {"一级分类", "二级分类", "问题数", "占比"})
         apply_number_formats(sheet)
+        apply_table_borders(sheet, table_border)
 
         for column in range(1, sheet.max_column + 1):
             letter = get_column_letter(column)
@@ -271,22 +320,26 @@ def format_workbook(workbook) -> None:
             else:
                 sheet.column_dimensions[letter].width = column_width(sheet, column)
 
-        for row in range(1, sheet.max_row + 1):
-            sheet.row_dimensions[row].height = 24
+        set_row_heights(sheet)
 
 
 def is_header_cell(value) -> bool:
     return value in {
         "机型名称",
+        "机型ID",
+        "尺寸",
         "一级分类",
         "二级分类",
         "问题数",
         "占比",
         "低分评论总数",
-        "ReviewID",
+        "序号",
         "Channel",
+        "整体评分",
         "评分",
         "评论日期",
+        "标题",
+        "评论内容",
         "问题摘要",
         "分类理由_可选",
     }
@@ -332,7 +385,7 @@ def apply_number_formats(sheet) -> None:
                     for cell in column_cells:
                         if isinstance(cell.value, (int, float)):
                             cell.number_format = "0.0%"
-            elif header in {"问题数", "低分评论总数"}:
+            elif header in {"序号", "问题数", "低分评论总数"}:
                 for column_cells in sheet.iter_cols(
                     min_col=column,
                     max_col=column,
@@ -364,13 +417,47 @@ def table_data_end_row(sheet, data_start: int) -> int:
     return sheet.max_row
 
 
+def apply_table_borders(sheet, border: Border) -> None:
+    """Add borders only to contiguous table regions, leaving spacer rows clean."""
+    for row in sheet.iter_rows():
+        if not any(is_header_cell(cell.value) for cell in row):
+            continue
+        populated_columns = [cell.column for cell in row if cell.value is not None]
+        if not populated_columns:
+            continue
+        start_column = min(populated_columns)
+        end_column = max(populated_columns)
+        end_row = table_data_end_row(sheet, row[0].row + 1)
+        for cells in sheet.iter_rows(
+            min_row=row[0].row,
+            max_row=end_row,
+            min_col=start_column,
+            max_col=end_column,
+        ):
+            for cell in cells:
+                cell.border = border
+
+
 def column_width(sheet, column: int) -> int:
     values = [
         sheet.cell(row=row, column=column).value
         for row in range(1, min(sheet.max_row, 80) + 1)
     ]
     max_len = max((len(str(value)) for value in values if value is not None), default=8)
-    return max(10, min(max_len + 2, 45))
+    return max(10, min(max_len + 2, 60))
+
+
+def set_row_heights(sheet) -> None:
+    """Expand rows enough to display long review text without altering cell contents."""
+    for row in range(1, sheet.max_row + 1):
+        values = [sheet.cell(row=row, column=col).value for col in range(1, sheet.max_column + 1)]
+        longest = max((len(str(value)) for value in values if value is not None), default=0)
+        explicit_lines = max(
+            (str(value).count("\n") + 1 for value in values if value is not None),
+            default=1,
+        )
+        estimated_lines = max(explicit_lines, math.ceil(longest / 58))
+        sheet.row_dimensions[row].height = min(409, max(24, estimated_lines * 15))
 
 
 def safe_print(value: str, *, stream=None) -> None:

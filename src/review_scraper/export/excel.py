@@ -30,9 +30,11 @@ def export_reviews_to_excel(
             columns=[
                 "机型ID",
                 "机型名称",
+                "尺寸",
                 "Channel",
                 "来源站点",
                 "来源URL",
+                "整体评分",
                 "评分",
                 "标题",
                 "评论内容",

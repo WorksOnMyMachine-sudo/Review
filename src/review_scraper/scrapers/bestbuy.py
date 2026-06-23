@@ -59,6 +59,14 @@ class BestBuyScraper(BaseScraper):
         ".BVRRNickname",
         ".bv-author",
     ]
+    OVERALL_RATING_SELECTORS = [
+        "[itemprop='aggregateRating'] [itemprop='ratingValue']",
+        ".ugc-c-review-average",
+        ".c-ratings-reviews .c-review-average",
+        ".c-ratings-reviews .c-ratings",
+        ".rating-average",
+        ".bv-average-rating",
+    ]
 
     def __init__(self, defaults, site_name: str = "bestbuy") -> None:
         super().__init__(defaults)
@@ -72,11 +80,13 @@ class BestBuyScraper(BaseScraper):
         model_name: str,
         max_pages: int = 5,
     ) -> list[ReviewRecord]:
+        overall_rating = self._fetch_overall_rating(url)
         records, endpoint_reached = self._scrape_bazaarvoice(
             url=url,
             model_id=model_id,
             model_name=model_name,
             max_pages=max_pages,
+            overall_rating=overall_rating,
         )
         if records or endpoint_reached:
             return records
@@ -86,6 +96,7 @@ class BestBuyScraper(BaseScraper):
             model_id=model_id,
             model_name=model_name,
             max_pages=max_pages,
+            overall_rating=overall_rating,
         )
 
     def _scrape_bazaarvoice(
@@ -95,6 +106,7 @@ class BestBuyScraper(BaseScraper):
         model_id: str,
         model_name: str,
         max_pages: int,
+        overall_rating: str | None = None,
     ) -> tuple[list[ReviewRecord], bool]:
         sku = self._extract_sku(url)
         if not sku:
@@ -110,6 +122,7 @@ class BestBuyScraper(BaseScraper):
                 rating_filter=rating_filter,
                 model_id=model_id,
                 model_name=model_name,
+                overall_rating=overall_rating,
             )
             endpoint_reached = endpoint_reached or page_reached
             if not page_records:
@@ -127,6 +140,7 @@ class BestBuyScraper(BaseScraper):
         rating_filter: str | None,
         model_id: str,
         model_name: str,
+        overall_rating: str | None = None,
     ) -> tuple[list[ReviewRecord], bool]:
         endpoint_reached = False
         for endpoint in self._bazaarvoice_urls(sku, page):
@@ -141,6 +155,9 @@ class BestBuyScraper(BaseScraper):
                 continue
 
             soup = self.parse_soup(html)
+            page_overall_rating = overall_rating or self.extract_overall_rating(
+                soup, self.OVERALL_RATING_SELECTORS
+            )
             blocks = self._find_review_blocks(soup)
             if not blocks:
                 continue
@@ -152,6 +169,7 @@ class BestBuyScraper(BaseScraper):
                     model_id=model_id,
                     model_name=model_name,
                     source_url=endpoint,
+                    overall_rating=page_overall_rating,
                 )
                 if not record or not (record.review_text or record.title):
                     continue
@@ -168,11 +186,15 @@ class BestBuyScraper(BaseScraper):
         model_id: str,
         model_name: str,
         max_pages: int,
+        overall_rating: str | None = None,
     ) -> list[ReviewRecord]:
         records: list[ReviewRecord] = []
         for page in range(1, max_pages + 1):
             page_url, html = self._fetch_first_html(url, page)
             soup = self.parse_soup(html)
+            page_overall_rating = overall_rating or self.extract_overall_rating(
+                soup, self.OVERALL_RATING_SELECTORS
+            )
             blocks = self._find_review_blocks(soup)
             if not blocks:
                 break
@@ -184,6 +206,7 @@ class BestBuyScraper(BaseScraper):
                     model_id=model_id,
                     model_name=model_name,
                     source_url=page_url,
+                    overall_rating=page_overall_rating,
                 )
                 if record and (record.review_text or record.title):
                     records.append(record)
@@ -209,6 +232,49 @@ class BestBuyScraper(BaseScraper):
             f"https://bestbuy.ugc.bazaarvoice.com/3545/{sku}/reviews.djs?{query}",
             f"https://bestbuy.ugc.bazaarvoice.com/3545-en_us/{sku}/reviews.djs?{query}",
         ]
+
+    def _fetch_overall_rating(self, url: str) -> str | None:
+        for candidate in self._overall_rating_url_candidates(url):
+            try:
+                html = self._fetch_html_with_retries(candidate, attempts=1)
+            except Exception:  # noqa: BLE001
+                continue
+            rating = self.extract_overall_rating(
+                self.parse_soup(html),
+                self.OVERALL_RATING_SELECTORS,
+            )
+            if rating:
+                return rating
+        return None
+
+    def _overall_rating_url_candidates(self, url: str) -> list[str]:
+        candidates = []
+        product_url = self._product_url(url)
+        if product_url:
+            candidates.append(product_url)
+        candidates.append(url)
+
+        out = []
+        seen = set()
+        for candidate in candidates:
+            if candidate in seen:
+                continue
+            seen.add(candidate)
+            out.append(candidate)
+        return out
+
+    @staticmethod
+    def _product_url(url: str) -> str | None:
+        parsed = urlparse(url)
+        match = re.search(r"(/product/[^/]+/[^/]+/sku/\d+)/reviews", parsed.path)
+        if match:
+            return urlunparse(parsed._replace(path=match.group(1), query="", fragment=""))
+
+        match = re.search(r"/site/reviews/([^/]+)/(\d+)", parsed.path)
+        if match:
+            slug, sku = match.groups()
+            return urlunparse(parsed._replace(path=f"/site/{slug}/{sku}.p", query="", fragment=""))
+        return None
 
     @staticmethod
     def _html_from_bazaarvoice_js(js: str) -> str:
@@ -335,7 +401,15 @@ class BestBuyScraper(BaseScraper):
                     return str(text).strip()
         return None
 
-    def _parse_block(self, block, *, model_id: str, model_name: str, source_url: str) -> ReviewRecord | None:
+    def _parse_block(
+        self,
+        block,
+        *,
+        model_id: str,
+        model_name: str,
+        source_url: str,
+        overall_rating: str | None = None,
+    ) -> ReviewRecord | None:
         rating_raw = self._text(block, self.RATING_SELECTORS)
         rating = self._normalize_rating(rating_raw) if rating_raw else None
         return ReviewRecord(
@@ -344,6 +418,7 @@ class BestBuyScraper(BaseScraper):
             site=self.site_name,
             source_url=source_url,
             rating=rating,
+            overall_rating=overall_rating,
             title=self._text(block, self.TITLE_SELECTORS),
             review_text=self._text(block, self.BODY_SELECTORS),
             review_date=self._text(block, self.DATE_SELECTORS),

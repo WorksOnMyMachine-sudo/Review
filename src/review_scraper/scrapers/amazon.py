@@ -38,6 +38,20 @@ class AmazonScraper(BaseScraper):
         "input[value*='Show 10 more']",
         "[data-hook='show-more-reviews-button']",
     ]
+    OVERALL_RATING_SELECTORS = [
+        "[data-hook='rating-out-of-text']",
+        "[data-hook='average-star-rating']",
+        "#averageCustomerReviews .a-icon-alt",
+        "#acrPopover .a-icon-alt",
+        "i[data-hook='average-star-rating'] span",
+    ]
+    FORMAT_STRIP_SELECTORS = [
+        "[data-hook='format-strip']",
+        "[data-hook='review-format-strip']",
+        "[data-hook='review-format-strip-linkless']",
+        "a.a-size-mini.a-link-normal.a-color-secondary",
+        "span.a-size-mini.a-color-secondary",
+    ]
 
     def __init__(self, defaults, site_name: str = "amazon") -> None:
         super().__init__(defaults)
@@ -70,6 +84,7 @@ class AmazonScraper(BaseScraper):
     ) -> list[ReviewRecord]:
         records: list[ReviewRecord] = []
         seen: set[str] = set()
+        overall_rating = self._fetch_overall_rating_http(base_url, asin)
         for page in range(1, max_pages + 1):
             page_url = self._build_page_url(base_url, asin, page)
             try:
@@ -79,8 +94,11 @@ class AmazonScraper(BaseScraper):
             if self._is_hard_block(html):
                 return []
             soup = self.parse_soup(html)
+            overall_rating = overall_rating or self.extract_overall_rating(
+                soup, self.OVERALL_RATING_SELECTORS
+            )
             page_records = self._records_from_soup(
-                soup, model_id, model_name, page_url, seen
+                soup, model_id, model_name, page_url, seen, overall_rating
             )
             if not page_records:
                 break
@@ -107,6 +125,7 @@ class AmazonScraper(BaseScraper):
         state_path = self._storage_state_path()
         records: list[ReviewRecord] = []
         seen: set[str] = set()
+        overall_rating: str | None = None
 
         with sync_playwright() as p:
             browser = p.chromium.launch(
@@ -124,6 +143,7 @@ class AmazonScraper(BaseScraper):
             context = browser.new_context(**context_kwargs)
             page = context.new_page()
             page.set_default_timeout(self.defaults.timeout_seconds * 1000)
+            overall_rating = self._fetch_overall_rating_playwright(context, base_url, asin)
 
             current_url = self._build_page_url(base_url, asin, 1)
             page.goto(current_url, wait_until="domcontentloaded")
@@ -156,8 +176,11 @@ class AmazonScraper(BaseScraper):
 
                 before_total = len(records)
                 soup = self.parse_soup(html)
+                overall_rating = overall_rating or self.extract_overall_rating(
+                    soup, self.OVERALL_RATING_SELECTORS
+                )
                 page_records = self._records_from_soup(
-                    soup, model_id, model_name, page.url, seen
+                    soup, model_id, model_name, page.url, seen, overall_rating
                 )
                 if page_records:
                     records.extend(page_records)
@@ -257,6 +280,7 @@ class AmazonScraper(BaseScraper):
         model_name: str,
         page_url: str,
         seen: set[str],
+        overall_rating: str | None = None,
     ) -> list[ReviewRecord]:
         blocks = []
         for selector in self.REVIEW_BLOCK_SELECTORS:
@@ -272,6 +296,7 @@ class AmazonScraper(BaseScraper):
                 model_id=model_id,
                 model_name=model_name,
                 source_url=page_url,
+                overall_rating=overall_rating,
             )
             if not record:
                 continue
@@ -326,17 +351,98 @@ class AmazonScraper(BaseScraper):
         match = re.search(r"/(?:product-reviews|dp)/([A-Z0-9]{10})", url, re.I)
         return match.group(1).upper() if match else None
 
+    def _fetch_overall_rating_http(self, base_url: str, asin: str) -> str | None:
+        for url in self._overall_rating_url_candidates(base_url, asin):
+            try:
+                html = self.fetch_html(url)
+            except Exception:  # noqa: BLE001
+                continue
+            if self._is_hard_block(html):
+                continue
+            rating = self.extract_overall_rating(
+                self.parse_soup(html),
+                self.OVERALL_RATING_SELECTORS,
+            )
+            if rating:
+                return rating
+        return None
+
+    def _fetch_overall_rating_playwright(self, context, base_url: str, asin: str) -> str | None:
+        rating_page = context.new_page()
+        rating_page.set_default_timeout(self.defaults.timeout_seconds * 1000)
+        try:
+            for url in self._overall_rating_url_candidates(base_url, asin):
+                try:
+                    rating_page.goto(url, wait_until="domcontentloaded", timeout=20000)
+                    html = rating_page.content()
+                except Exception:  # noqa: BLE001
+                    continue
+                if self._is_auth_or_robot_page(html, rating_page.url):
+                    continue
+                rating = self.extract_overall_rating(
+                    self.parse_soup(html),
+                    self.OVERALL_RATING_SELECTORS,
+                )
+                if rating:
+                    return rating
+        finally:
+            rating_page.close()
+        return None
+
+    def _overall_rating_url_candidates(self, base_url: str, asin: str) -> list[str]:
+        candidates = [
+            f"https://www.amazon.com/dp/{asin}",
+            self._build_all_stars_review_url(base_url, asin),
+            base_url,
+        ]
+        out = []
+        seen = set()
+        for candidate in candidates:
+            if candidate in seen:
+                continue
+            seen.add(candidate)
+            out.append(candidate)
+        return out
+
+    def _build_all_stars_review_url(self, base_url: str, asin: str) -> str:
+        parsed = urlparse(base_url)
+        path = parsed.path
+        if "/product-reviews/" not in path:
+            path = f"/product-reviews/{asin}"
+        query = parse_qs(parsed.query)
+        query["pageNumber"] = ["1"]
+        query["filterByStar"] = ["all_stars"]
+        query["reviewerType"] = ["all_reviews"]
+        if "ie" not in query:
+            query["ie"] = ["UTF8"]
+        return urlunparse(parsed._replace(path=path, query=urlencode(query, doseq=True)))
+
     def _build_page_url(self, base_url: str, asin: str, page: int) -> str:
         parsed = urlparse(base_url)
         query = parse_qs(parsed.query)
         query["pageNumber"] = [str(page)]
         if "reviewerType" not in query:
             query["reviewerType"] = ["all_reviews"]
-        if "filterByStar" not in query:
+        star_filter = self._star_filter_from_site_name()
+        if star_filter:
+            query["filterByStar"] = [star_filter]
+        elif "filterByStar" not in query:
             query["filterByStar"] = ["all_stars"]
         if "ie" not in query:
             query["ie"] = ["UTF8"]
         return urlunparse(parsed._replace(query=urlencode(query, doseq=True)))
+
+    def _star_filter_from_site_name(self) -> str | None:
+        match = re.search(r"(?:amazon|amz)_(\d)(?:\D|$)", self.site_name.lower())
+        if not match:
+            return None
+        return {
+            "5": "five_star",
+            "4": "four_star",
+            "3": "three_star",
+            "2": "two_star",
+            "1": "one_star",
+        }.get(match.group(1))
 
     @staticmethod
     def _is_hard_block(html: str) -> bool:
@@ -371,7 +477,15 @@ class AmazonScraper(BaseScraper):
             return True
         return False
 
-    def _parse_block(self, block, *, model_id: str, model_name: str, source_url: str) -> ReviewRecord | None:
+    def _parse_block(
+        self,
+        block,
+        *,
+        model_id: str,
+        model_name: str,
+        source_url: str,
+        overall_rating: str | None = None,
+    ) -> ReviewRecord | None:
         title_node = block.select_one("a[data-hook='review-title'] span") or block.select_one(
             "a[data-hook='review-title']"
         )
@@ -401,15 +515,59 @@ class AmazonScraper(BaseScraper):
         if vp:
             verified = vp.get_text(strip=True)
 
+        size = self._extract_size_from_review_block(block)
+
         return ReviewRecord(
             model_id=model_id,
             model_name=model_name,
             site=self.site_name,
             source_url=source_url,
             rating=rating,
+            overall_rating=overall_rating,
+            size=size,
             title=title,
             review_text=body,
             review_date=review_date,
             author=author,
             verified_purchase=verified,
         )
+
+    def _extract_size_from_review_block(self, block) -> str | None:
+        candidates: list[str] = []
+        for selector in self.FORMAT_STRIP_SELECTORS:
+            for node in block.select(selector):
+                text = node.get_text(" ", strip=True)
+                if text:
+                    candidates.append(text)
+
+        if not candidates:
+            # Some Amazon layouts put the selected variation near the title without
+            # stable data-hook attributes.
+            for node in block.select(".a-row.a-spacing-mini, .a-row.a-spacing-none"):
+                text = node.get_text(" ", strip=True)
+                if "size" in text.lower() or re.search(r"\b\d{2,3}\s*(?:inch|inches|class|[\"”])\b", text, re.I):
+                    candidates.append(text)
+
+        for text in candidates:
+            size = self._extract_size_from_text(text)
+            if size:
+                return size
+        return None
+
+    @staticmethod
+    def _extract_size_from_text(text: str) -> str | None:
+        normalized = re.sub(r"\s+", " ", text.replace("\xa0", " ")).strip()
+        if not normalized:
+            return None
+
+        allowed_sizes = "32|40|43|50|55|58|65|70|75|85|98|100"
+        patterns = [
+            rf"\bSize\s*:\s*({allowed_sizes})\s*(?:[- ]?(?:inch|inches|in\.|class)|[\"”])?",
+            rf"\b({allowed_sizes})\s*(?:[- ]?(?:inch|inches|in\.|class)|[\"”])\b",
+            rf"\b({allowed_sizes})\s*(?:吋|寸)\b",
+        ]
+        for pattern in patterns:
+            match = re.search(pattern, normalized, flags=re.I)
+            if match:
+                return f"{match.group(1)}寸"
+        return None

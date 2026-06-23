@@ -11,6 +11,8 @@ class ReviewRecord:
     site: str
     source_url: str
     rating: str | None = None
+    overall_rating: str | None = None
+    size: str | None = None
     title: str | None = None
     review_text: str | None = None
     review_date: str | None = None
@@ -42,9 +44,11 @@ class ReviewRecord:
         return {
             "机型ID": self.model_id,
             "机型名称": self.model_name,
+            "尺寸": self.size or "",
             "Channel": self.channel,
             "来源站点": self.site,
             "来源URL": self.source_url,
+            "整体评分": self.overall_rating or "",
             "评分": self.rating or "",
             "标题": self.title or "",
             "评论内容": self.review_text or "",

@@ -151,6 +151,8 @@ python scripts/summarize_classified_reviews.py -o data/output/review_classificat
 
 报告会包含一个 `总表`，按型号、一级分类统计问题数和占比；同时每个机型单独一个 sheet。
 
+各机型 sheet 的明细区域会保留完整的原始评论内容，不输出 `ReviewID`、“标题”和“问题摘要”列。长评论单元格会自动换行并扩展行高，便于直接检查完整网评。
+
 后续如果有可用 OpenAI API Key，可在 `.env` 中添加：
 
 ```env
@@ -160,8 +162,23 @@ OPENAI_API_KEY=你的key
 然后直接运行默认语义分类：
 
 ```powershell
-python scripts/analyze_reviews.py -o data/output/review_issue_analysis_latest.xlsx
+python scripts/analyze_reviews.py --classification-mode semantic -o data/output/review_issue_analysis_latest.xlsx
 ```
+
+也可以明确指定输入文件：
+
+```powershell
+python scripts/analyze_reviews.py -i data/output/reviews_YYYYMMDD_HHMMSS.xlsx --classification-mode semantic -o data/output/review_issue_analysis_latest.xlsx
+```
+
+API 模式会直接生成最终分析报告，无需再执行“导出模板 → 上传网页版 ChatGPT → 下载 → 汇总”的人工流程。程序会把 `Call log分类.xlsx` 作为固定分类体系传给模型，并在本地校验一级、二级分类；无法确定时回退为 `Other / Please add comments`。
+
+语义分类内置以下严格边界：
+
+- `Power_on_Hardware / Cannot turn on`：只有评论明确表示无法开机、按电源无反应、无法从待机唤醒或设备无法启动时才能使用；不能仅凭 `stopped working`、`died`、`broken`、`failed` 判断。
+- `OTA_failure`：只有升级、固件或 OTA 更新过程本身检测、下载、安装、完成失败或卡住时才能使用；更新完成后出现的其他问题应按实际故障分类。
+
+API 返回结果还会写入简短的 `分类理由`，方便人工复核。
 
 ## Excel 列说明
 

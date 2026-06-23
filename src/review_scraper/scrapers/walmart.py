@@ -64,6 +64,13 @@ class WalmartScraper(BaseScraper):
         ".BVRRRatingNumber",
         ".bv-rating",
     ]
+    OVERALL_RATING_SELECTORS = [
+        "[itemprop='aggregateRating'] [itemprop='ratingValue']",
+        "[data-testid='reviews-and-ratings'] [aria-label*='stars']",
+        "[data-testid='product-ratings'] [aria-label*='stars']",
+        "[aria-label*='average rating']",
+        ".bv-average-rating",
+    ]
 
     def __init__(self, defaults, site_name: str = "walmart") -> None:
         super().__init__(defaults)
@@ -77,11 +84,13 @@ class WalmartScraper(BaseScraper):
         model_name: str,
         max_pages: int = 5,
     ) -> list[ReviewRecord]:
+        overall_rating = self._fetch_overall_rating(url)
         bazaarvoice_records = self._scrape_bazaarvoice(
             url=url,
             model_id=model_id,
             model_name=model_name,
             max_pages=max_pages,
+            overall_rating=overall_rating,
         )
         if bazaarvoice_records:
             return bazaarvoice_records
@@ -100,6 +109,7 @@ class WalmartScraper(BaseScraper):
                         model_id=model_id,
                         model_name=model_name,
                         max_pages=max_pages,
+                        overall_rating=overall_rating,
                     )
                 consecutive_no_data += 1
                 if consecutive_no_data >= 5:
@@ -111,6 +121,7 @@ class WalmartScraper(BaseScraper):
                 model_id=model_id,
                 model_name=model_name,
                 source_url=page_url,
+                overall_rating=overall_rating,
             )
             page_records = self._dedupe(page_records, seen)
             if not page_records:
@@ -133,6 +144,7 @@ class WalmartScraper(BaseScraper):
         model_id: str,
         model_name: str,
         max_pages: int,
+        overall_rating: str | None = None,
     ) -> list[ReviewRecord]:
         item_id = self._extract_item_id(url)
         if not item_id:
@@ -159,6 +171,7 @@ class WalmartScraper(BaseScraper):
                 model_id=model_id,
                 model_name=model_name,
                 source_url=endpoint,
+                overall_rating=overall_rating,
             )
             page_records = self._dedupe(page_records, seen)
             if not page_records:
@@ -185,6 +198,39 @@ class WalmartScraper(BaseScraper):
             }
         )
         return f"https://walmart.ugc.bazaarvoice.com/1336/{item_id}/reviews.djs?{query}"
+
+    def _fetch_overall_rating(self, url: str) -> str | None:
+        for candidate in self._overall_rating_url_candidates(url):
+            try:
+                html = self._fetch_review_html(candidate)
+            except Exception:  # noqa: BLE001
+                continue
+            if not html:
+                continue
+            rating = self.extract_overall_rating(
+                self.parse_soup(html),
+                self.OVERALL_RATING_SELECTORS,
+            )
+            if rating:
+                return rating
+        return None
+
+    def _overall_rating_url_candidates(self, url: str) -> list[str]:
+        candidates = []
+        item_id = self._extract_item_id(url)
+        if item_id:
+            candidates.append(f"https://www.walmart.com/ip/{item_id}")
+            candidates.append(f"https://www.walmart.com/reviews/product/{item_id}")
+        candidates.append(url)
+
+        out = []
+        seen = set()
+        for candidate in candidates:
+            if candidate in seen:
+                continue
+            seen.add(candidate)
+            out.append(candidate)
+        return out
 
     def _fetch_bazaarvoice_js(self, url: str) -> str:
         try:
@@ -223,6 +269,7 @@ class WalmartScraper(BaseScraper):
         model_id: str,
         model_name: str,
         max_pages: int,
+        overall_rating: str | None = None,
     ) -> list[ReviewRecord]:
         try:
             from playwright.sync_api import sync_playwright
@@ -296,6 +343,7 @@ class WalmartScraper(BaseScraper):
                     model_id=model_id,
                     model_name=model_name,
                     source_url=page.url,
+                    overall_rating=overall_rating,
                 )
                 page_records = self._dedupe(page_records, seen)
                 if not page_records:
@@ -369,13 +417,19 @@ class WalmartScraper(BaseScraper):
         model_id: str,
         model_name: str,
         source_url: str,
+        overall_rating: str | None = None,
     ) -> list[ReviewRecord]:
         soup = self.parse_soup(html)
+        page_overall_rating = overall_rating or self.extract_overall_rating(
+            soup,
+            self.OVERALL_RATING_SELECTORS,
+        )
         records = self._parse_json_reviews(
             soup,
             model_id=model_id,
             model_name=model_name,
             source_url=source_url,
+            overall_rating=page_overall_rating,
         )
         if records:
             return records
@@ -384,6 +438,7 @@ class WalmartScraper(BaseScraper):
             model_id=model_id,
             model_name=model_name,
             source_url=source_url,
+            overall_rating=page_overall_rating,
         )
 
     def _parse_json_reviews(
@@ -393,6 +448,7 @@ class WalmartScraper(BaseScraper):
         model_id: str,
         model_name: str,
         source_url: str,
+        overall_rating: str | None = None,
     ) -> list[ReviewRecord]:
         records: list[ReviewRecord] = []
         for payload in self._json_payloads(soup):
@@ -402,6 +458,7 @@ class WalmartScraper(BaseScraper):
                     model_id=model_id,
                     model_name=model_name,
                     source_url=source_url,
+                    overall_rating=overall_rating,
                 )
                 if record:
                     records.append(record)
@@ -456,6 +513,7 @@ class WalmartScraper(BaseScraper):
         model_id: str,
         model_name: str,
         source_url: str,
+        overall_rating: str | None = None,
     ) -> ReviewRecord | None:
         body = self._pick_text(
             item,
@@ -491,6 +549,7 @@ class WalmartScraper(BaseScraper):
             site=self.site_name,
             source_url=source_url,
             rating=self._normalize_rating(rating_raw),
+            overall_rating=overall_rating,
             title=title,
             review_text=body,
             review_date=review_date,
@@ -505,6 +564,7 @@ class WalmartScraper(BaseScraper):
         model_id: str,
         model_name: str,
         source_url: str,
+        overall_rating: str | None = None,
     ) -> list[ReviewRecord]:
         records: list[ReviewRecord] = []
         blocks = self._find_review_blocks(soup)
@@ -515,6 +575,7 @@ class WalmartScraper(BaseScraper):
                 site=self.site_name,
                 source_url=source_url,
                 rating=self._normalize_rating(self._text(block, self.RATING_SELECTORS)),
+                overall_rating=overall_rating,
                 title=self._text(block, self.TITLE_SELECTORS),
                 review_text=self._text(block, self.BODY_SELECTORS),
                 review_date=self._text(block, self.DATE_SELECTORS),

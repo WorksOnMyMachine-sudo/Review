@@ -161,3 +161,182 @@ models:
         # https://www.walmart.com/reviews/product/123456789
         url: "https://www.walmart.com/reviews/product/17310022307"
         max_pages: 50
+
+  - model_id: "E7SF"
+    display_name: "E7SF"
+    sites:
+      # 填 Amazon review URL。建议按星级分别填，程序会自动按 Channel=AMZ 导出。
+      amazon_5:
+        enabled: true
+        url: "https://www.amazon.com/portal/customer-reviews/B0GH74B9RQ/ref=cm_cr_arp_d_viewopt_sr?ie=UTF8&filterByStar=five_star&reviewerType=all_reviews&sortBy=recent&pageNumber=1#reviews-filter-bar"
+        max_pages: 1000
+      amazon_4:
+        enabled: true
+        url: "https://www.amazon.com/portal/customer-reviews/B0GH74B9RQ/ref=cm_cr_arp_d_viewopt_sr?ie=UTF8&filterByStar=four_star&reviewerType=all_reviews&sortBy=recent&pageNumber=1#reviews-filter-bar"
+        max_pages: 1000
+      amazon_3:
+        enabled: true
+        url: "https://www.amazon.com/portal/customer-reviews/B0GH74B9RQ/ref=cm_cr_arp_d_viewopt_sr?ie=UTF8&filterByStar=three_star&reviewerType=all_reviews&sortBy=recent&pageNumber=1#reviews-filter-bar"
+        max_pages: 1000
+      amazon_2:
+        enabled: true
+        url: "https://www.amazon.com/portal/customer-reviews/B0GH74B9RQ/ref=cm_cr_arp_d_viewopt_sr?ie=UTF8&filterByStar=two_star&reviewerType=all_reviews&sortBy=recent&pageNumber=1#reviews-filter-bar"
+        max_pages: 1000
+      amazon_1:
+        enabled: true
+        url: "https://www.amazon.com/portal/customer-reviews/B0GH74B9RQ/ref=cm_cr_arp_d_viewopt_sr?ie=UTF8&filterByStar=one_star&reviewerType=all_reviews&sortBy=recent&pageNumber=1#reviews-filter-bar"
+        max_pages: 1000
+
+  - model_id: "Z670R"
+    display_name: "Z670R"
+    sites:
+      # 填 Amazon review URL。建议按星级分别填，程序会自动按 Channel=AMZ 导出。
+      amazon_5:
+        enabled: true
+        url: "https://www.amazon.com/portal/customer-reviews/B0GNTCJNTT/ref=acr_dp_hist_5?ie=UTF8&filterByStar=five_star&reviewerType=all_reviews#reviews-filter-bar"
+        max_pages: 1000
+      amazon_4:
+        enabled: true
+        url: "https://www.amazon.com/portal/customer-reviews/B0GNTCJNTT/ref=acr_dp_hist_5?ie=UTF8&filterByStar=four_star&reviewerType=all_reviews#reviews-filter-bar"
+        max_pages: 1000
+      amazon_3:
+        enabled: true
+        url: "https://www.amazon.com/portal/customer-reviews/B0GNTCJNTT/ref=acr_dp_hist_5?ie=UTF8&filterByStar=three_star&reviewerType=all_reviews#reviews-filter-bar"
+        max_pages: 1000
+      amazon_2:
+        enabled: true
+        url: "https://www.amazon.com/portal/customer-reviews/B0GNTCJNTT/ref=acr_dp_hist_5?ie=UTF8&filterByStar=two_star&reviewerType=all_reviews#reviews-filter-bar"
+        max_pages: 1000
+      amazon_1:
+        enabled: true
+        url: "https://www.amazon.com/portal/customer-reviews/B0GNTCJNTT/ref=acr_dp_hist_5?ie=UTF8&filterByStar=one_star&reviewerType=all_reviews#reviews-filter-bar"
+        max_pages: 1000
+
+  - model_id: "U7SF"
+    display_name: "U7SF"
+    sites:
+      # 填 Amazon review URL。建议按星级分别填，程序会自动按 Channel=AMZ 导出。
+      amazon_5:
+        enabled: true
+        url: "https://www.amazon.com/portal/customer-reviews/B0GJ1958F8/ref=acr_dp_hist_5?ie=UTF8&filterByStar=five_star&reviewerType=all_reviews#reviews-filter-bar"
+        max_pages: 1000
+      amazon_4:
+        enabled: true
+        url: "https://www.amazon.com/portal/customer-reviews/B0GJ1958F8/ref=acr_dp_hist_5?ie=UTF8&filterByStar=four_star&reviewerType=all_reviews#reviews-filter-bar"
+        max_pages: 1000
+      amazon_3:
+        enabled: true
+        url: "https://www.amazon.com/portal/customer-reviews/B0GJ1958F8/ref=acr_dp_hist_5?ie=UTF8&filterByStar=three_star&reviewerType=all_reviews#reviews-filter-bar"
+        max_pages: 1000
+      amazon_2:
+        enabled: true
+        url: "https://www.amazon.com/portal/customer-reviews/B0GJ1958F8/ref=acr_dp_hist_5?ie=UTF8&filterByStar=two_star&reviewerType=all_reviews#reviews-filter-bar"
+        max_pages: 1000
+      amazon_1:
+        enabled: true
+        url: "https://www.amazon.com/portal/customer-reviews/B0GJ1958F8/ref=acr_dp_hist_5?ie=UTF8&filterByStar=one_star&reviewerType=all_reviews#reviews-filter-bar"
+        max_pages: 1000
+
+  - model_id: "M450SU"
+    display_name: "M450SU"
+    sites:
+      # 填 Best Buy 各尺寸评论页 URL。url 留空时会自动跳过。
+      bby_85:
+        enabled: true
+        url: ""
+        max_pages: 5
+      bby_75:
+        enabled: true
+        url: ""
+        max_pages: 5
+      bby_65:
+        enabled: true
+        url: ""
+        max_pages: 5
+      bby_55:
+        enabled: true
+        url: "https://www.bestbuy.com/product/toshiba-55-class-m450-qled-series-4k-uhd-smart-fire-tv/J3Z9Z42KKV/sku/6672670/reviews?ratings=5"
+        max_pages: 5
+      bby_50:
+        enabled: true
+        url: ""
+        max_pages: 5
+      bby_43:
+        enabled: true
+        url: "https://www.bestbuy.com/product/toshiba-43-class-m450-qled-series-4k-uhd-smart-fire-tv/J3Z9Z42KZK/sku/6672731/reviews?ratings=5"
+        max_pages: 5
+
+  - model_id: "UR9SG"
+    display_name: "UR9SG"
+    sites:
+      # 填 Best Buy 各尺寸评论页 URL。url 留空时会自动跳过。
+      bby_100:
+        enabled: true
+        url: ""
+        max_pages: 5
+      bby_85:
+        enabled: true
+        url: ""
+        max_pages: 5
+      bby_75:
+        enabled: true
+        url: ""
+        max_pages: 5
+      bby_65:
+        enabled: true
+        url: "https://www.bestbuy.com/product/hisense-65-class-ur9-rgb-miniled-series-uhd-4k-hdr-smart-google-tv-2026/J3Z9Z42TQL/sku/6673154/reviews?ratings=5"
+        max_pages: 5
+
+  - model_id: "U6SG"
+    display_name: "U6SG"
+    sites:
+      # 填 Best Buy 各尺寸评论页 URL。url 留空时会自动跳过。
+      bby_100:
+        enabled: true
+        url: "https://www.bestbuy.com/product/hisense-100-class-u6-series-miniled-qled-uhd-4k-hdr-smart-fire-tv-2026/J3Z9Z42QZZ/sku/6673653/reviews?ratings=5"
+        max_pages: 5
+      bby_85:
+        enabled: true
+        url: ""
+        max_pages: 5
+      bby_75:
+        enabled: true
+        url: "https://www.bestbuy.com/product/hisense-75-class-u6-series-miniled-qled-uhd-4k-hdr-smart-fire-tv-2026/J3Z9Z42Q4K/sku/6673650/reviews?ratings=5"
+        max_pages: 5
+      bby_65:
+        enabled: true
+        url: "https://www.bestbuy.com/product/hisense-65-class-u6-series-miniled-qled-uhd-4k-hdr-smart-fire-tv-2026/J3Z9Z42Q5J/sku/6673654/reviews?ratings=4"
+        max_pages: 5
+      bby_55:
+        enabled: true
+        url: "https://www.bestbuy.com/product/hisense-55-class-u6-series-miniled-qled-uhd-4k-hdr-smart-fire-tv-2026/J3Z9Z42Q5W/sku/6673651/reviews?ratings=4"
+        max_pages: 5
+      bby_50:
+        enabled: true
+        url: "https://www.bestbuy.com/product/hisense-50-class-u6-series-miniled-qled-uhd-4k-hdr-smart-fire-tv-2026/J3Z9Z42WF6/sku/6673652/reviews?ratings=5"
+        max_pages: 5
+
+  - model_id: "UR8SG"
+    display_name: "UR8SG"
+    sites:
+      # 填 Best Buy 各尺寸评论页 URL。url 留空时会自动跳过。
+      bby_100:
+        enabled: true
+        url: ""
+        max_pages: 5
+      bby_85:
+        enabled: true
+        url: ""
+        max_pages: 5
+      bby_75:
+        enabled: true
+        url: ""
+        max_pages: 5
+      bby_65:
+        enabled: true
+        url: ""
+        max_pages: 5
+      bby_55:
+        enabled: true
+        url: ""
+        max_pages: 5
