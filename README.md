@@ -107,6 +107,23 @@ review-scraper run --site bestbuy
 
 输出示例：`data/output/reviews_20260515_143022.xlsx`
 
+### 3.1 一键爬取 + AI 分析
+
+如果已经配置好 API Key，并希望执行后自动完成“网上抓评论 → 1-3 星低分语义分类 → 生成最终报告”，可直接运行：
+
+```powershell
+python scripts/run_full_workflow.py -o data/output/review_issue_analysis_latest.xlsx
+```
+
+只跑某个机型或站点：
+
+```powershell
+python scripts/run_full_workflow.py --model S7S -o data/output/review_issue_analysis_latest.xlsx
+python scripts/run_full_workflow.py --site amazon -o data/output/review_issue_analysis_latest.xlsx
+```
+
+该流程会先在 `data/output/` 下生成新的 `reviews_YYYYMMDD_HHMMSS.xlsx`，再自动把这份文件传给 `analyze_reviews.py` 做 API 语义分析。
+
 ### 4. 分析低分评论
 
 爬取完成后，可按机型分析 3 星及以下评论，并输出问题分类占比报告：

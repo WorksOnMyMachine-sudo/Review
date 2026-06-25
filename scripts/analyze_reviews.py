@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import re
 import sys
+import time
 from collections import Counter
 from copy import copy
 from datetime import datetime
@@ -250,6 +252,10 @@ STOPWORDS = {
 
 def main() -> None:
     args = parse_args()
+    run_analysis(args)
+
+
+def run_analysis(args: argparse.Namespace) -> None:
     input_path = resolve_input(args.input)
     output_path = resolve_output(args.output)
     category_path = resolve_category_file(args.category_file)
@@ -283,7 +289,7 @@ def main() -> None:
     )
     low_reviews["问题摘要中文"] = translate_summaries(low_reviews["问题摘要"].tolist())
 
-    write_analysis(low_reviews, output_path, input_path, dedupe_stats, issue_rules, category_path)
+    write_analysis(low_reviews, reviews, output_path, input_path, dedupe_stats, issue_rules, category_path)
     safe_print(f"INPUT: {input_path}")
     safe_print(f"DEDUPED_REVIEWS: {input_path}")
     safe_print(f"CATEGORY: {category_path or 'built-in fallback rules'}")
@@ -332,6 +338,7 @@ def parse_args() -> argparse.Namespace:
 
 def resolve_input(path: Path | None) -> Path:
     if path:
+        path = path if path.is_absolute() else ROOT / path
         if not path.exists():
             raise FileNotFoundError(path)
         return path
@@ -656,18 +663,46 @@ def classify_reviews_semantic(
         )
 
     model = os.getenv("REVIEW_ANALYSIS_CLASSIFY_MODEL", "gpt-4o-mini").strip()
+    batch_size = read_int_env("REVIEW_ANALYSIS_CLASSIFY_BATCH_SIZE", default=3, minimum=1, maximum=30)
     taxonomy = {category: phrases for category, phrases in issue_rules}
-    results: list[tuple[str, str]] = []
-    for batch in chunked(review_rows_for_semantic_classification(df), 12):
-        results.extend(
-            classify_batch_semantic(
-                batch,
-                taxonomy=taxonomy,
-                api_key=api_key,
-                model=model,
-            )
+    rows = review_rows_for_semantic_classification(df)
+    total = len(rows)
+    cache = load_semantic_cache()
+    results: list[tuple[str, str, str] | None] = [None] * total
+    pending_rows: list[dict] = []
+
+    for row in rows:
+        cached = cache.get(review_cache_key(row))
+        if cached:
+            results[row["id"]] = tuple(cached)
+        else:
+            pending_rows.append(row)
+
+    cached_count = total - len(pending_rows)
+    if cached_count:
+        safe_print(f"语义分类缓存: 已复用 {cached_count}/{total} 条")
+
+    completed = cached_count
+    for batch in chunked(pending_rows, batch_size):
+        safe_print(f"语义分类进度: {completed}/{total} 条，正在请求 {len(batch)} 条")
+        batch_results = classify_batch_semantic(
+            batch,
+            taxonomy=taxonomy,
+            api_key=api_key,
+            model=model,
         )
-    return results[: len(df)]
+        for row, item in zip(batch, batch_results):
+            normalized = tuple(item)
+            results[row["id"]] = normalized
+            cache[review_cache_key(row)] = list(normalized)
+        save_semantic_cache(cache)
+        completed += len(batch)
+        safe_print(f"语义分类进度: {completed}/{total} 条")
+
+    return [
+        item if item is not None else ("Other", "Please add comments", "未生成分类结果")
+        for item in results
+    ][: len(df)]
 
 
 def review_rows_for_semantic_classification(df: pd.DataFrame) -> list[dict]:
@@ -676,13 +711,14 @@ def review_rows_for_semantic_classification(df: pd.DataFrame) -> list[dict]:
         rows.append(
             {
                 "id": item_id,
+                "cache_id": make_review_stable_id(row),
                 "model": str(row.get("机型名称", "")),
                 "channel": str(row.get("Channel", "")),
                 "rating": str(row.get("评分", "")),
                 "date": str(row.get("评论日期", "")),
-                "title": truncate_text(row.get("标题", ""), 300),
-                "review": truncate_text(row.get("评论内容", ""), 1600),
-                "summary": truncate_text(row.get("问题摘要", ""), 500),
+                "title": truncate_text(row.get("标题", ""), 160),
+                "review": truncate_text(row.get("评论内容", ""), 900),
+                "summary": truncate_text(row.get("问题摘要", ""), 260),
             }
         )
     return rows
@@ -701,28 +737,15 @@ def classify_batch_semantic(
             {
                 "role": "system",
                 "content": (
-                    "You classify low-rating TV product reviews into a fixed Call Log taxonomy. "
-                    "Read the full review meaning and the user's actual complaint. Do not classify by simple keyword matching. "
-                    "Choose the single best primary category and secondary category. "
-                    "The primary must be exactly one taxonomy key. The secondary must be exactly one item under that primary. "
-                    "Never invent, rename, merge, or paraphrase taxonomy values. "
-                    "If the review has no usable complaint text, no specific issue can be determined, or no category fits, "
-                    "return primary 'Other' and secondary 'Please add comments'. "
-                    "If multiple issues appear, choose the main issue that best explains the negative rating. "
-                    "Apply these boundaries strictly: "
-                    "(1) Power_on_Hardware / Cannot turn on may be used only when the reviewer explicitly says the TV "
-                    "cannot power on, the power button has no response, the TV cannot wake from standby, or the device "
-                    "is black and unable to start. Words such as 'stopped working', 'died', 'broken', or 'failed' are not "
-                    "enough by themselves. Do not use this category for a damaged screen, no picture with sound, a frozen "
-                    "system, an app failure, network failure, remote-control failure, or a return without an explicit "
-                    "power-on failure. Classify the actual described issue instead. "
-                    "(2) OTA_failure may be used only when the reviewer explicitly complains about the software, firmware, "
-                    "or OTA update process itself, such as failure to detect, download, install, complete, or an update "
-                    "that is stuck. Use OTA_failure / Cannot start after OTA only when an update failure or update process "
-                    "explicitly caused the TV not to start. If a problem merely appeared after a completed update, classify "
-                    "the actual resulting problem, not OTA_failure. "
-                    "For each review, provide a concise Simplified Chinese reason based on the review text. "
-                    "Return only a JSON array in this exact shape: "
+                    "Classify low-rating TV reviews into the given taxonomy. "
+                    "Use meaning, not keyword matching. Pick one main complaint, especially the one explaining low rating/return. "
+                    "primary must be an exact taxonomy key; secondary must be exact under that primary. Do not invent labels. "
+                    "If unclear/no complaint/no fit: primary='Other', secondary='Please add comments'. "
+                    "Strict boundaries: Cannot turn on only for explicit no power/no response/cannot wake/black and cannot start; "
+                    "not for screen damage, no picture with sound, freeze, app/network/remote failure, or generic broken/died/failed. "
+                    "OTA_failure only for update process failure/stuck/detect/download/install/complete failure; "
+                    "if issue happened after a completed update, classify the actual resulting issue. "
+                    "Return concise Chinese reason. Return only JSON array: "
                     "[{\"id\":0,\"primary\":\"...\",\"secondary\":\"...\",\"reason\":\"...\"}]."
                 ),
             },
@@ -738,24 +761,25 @@ def classify_batch_semantic(
             },
         ],
         "temperature": 0,
+        "max_tokens": read_int_env("REVIEW_ANALYSIS_CLASSIFY_MAX_TOKENS", default=5000, minimum=200, maximum=12000),
+        "max_completion_tokens": read_int_env("REVIEW_ANALYSIS_CLASSIFY_MAX_TOKENS", default=5000, minimum=200, maximum=12000),
+        "reasoning_split": True,
     }
     headers = {
         "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json",
     }
 
-    with httpx.Client(timeout=90) as client:
-        response = client.post(
-            "https://api.openai.com/v1/chat/completions",
-            headers=headers,
-            json=payload,
-        )
+    response = post_chat_completion(payload, headers=headers, action="语义分类")
     if response.status_code == 429:
         raise RuntimeError("OpenAI API 额度不足或账单不可用，无法进行语义分类。")
+    if response.status_code >= 400:
+        raise RuntimeError(format_api_error(response, "语义分类"))
     response.raise_for_status()
 
-    content = response.json()["choices"][0]["message"]["content"].strip()
-    parsed = json.loads(strip_code_fence(content))
+    response_data = response.json()
+    content = response_message_text(response_data)
+    parsed = parse_semantic_items(content, rows)
     by_id = {
         int(item.get("id")): validate_semantic_classification(item, taxonomy)
         for item in parsed
@@ -879,10 +903,35 @@ def translate_summaries(values: list[str]) -> list[str]:
         return [""] * len(values)
 
     model = os.getenv("REVIEW_ANALYSIS_TRANSLATE_MODEL", "gpt-4o-mini").strip()
-    translations: list[str] = []
-    for batch in chunked(values, 20):
-        translations.extend(translate_batch(batch, api_key=api_key, model=model))
-    return translations[: len(values)]
+    batch_size = read_int_env("REVIEW_ANALYSIS_TRANSLATE_BATCH_SIZE", default=10, minimum=1, maximum=50)
+    cache = load_translation_cache()
+    translations: list[str | None] = [None] * len(values)
+    pending: list[tuple[int, str]] = []
+
+    for index, value in enumerate(values):
+        key = text_cache_key(value)
+        cached = cache.get(key)
+        if cached is not None:
+            translations[index] = cached
+        else:
+            pending.append((index, value))
+
+    cached_count = len(values) - len(pending)
+    if cached_count:
+        safe_print(f"摘要翻译缓存: 已复用 {cached_count}/{len(values)} 条")
+
+    completed = cached_count
+    for batch_items in chunked(pending, batch_size):
+        batch_values = [value for _, value in batch_items]
+        batch_results = translate_batch(batch_values, api_key=api_key, model=model)
+        for (index, value), translated in zip(batch_items, batch_results):
+            translations[index] = translated
+            cache[text_cache_key(value)] = translated
+        save_translation_cache(cache)
+        completed += len(batch_items)
+        safe_print(f"摘要翻译进度: {completed}/{len(values)} 条")
+
+    return [item or "" for item in translations]
 
 
 def translate_batch(values: list[str], *, api_key: str, model: str) -> list[str]:
@@ -906,6 +955,9 @@ def translate_batch(values: list[str], *, api_key: str, model: str) -> list[str]
             },
         ],
         "temperature": 0,
+        "max_tokens": read_int_env("REVIEW_ANALYSIS_TRANSLATE_MAX_TOKENS", default=3000, minimum=100, maximum=8000),
+        "max_completion_tokens": read_int_env("REVIEW_ANALYSIS_TRANSLATE_MAX_TOKENS", default=3000, minimum=100, maximum=8000),
+        "reasoning_split": True,
     }
     headers = {
         "Authorization": f"Bearer {api_key}",
@@ -913,21 +965,23 @@ def translate_batch(values: list[str], *, api_key: str, model: str) -> list[str]
     }
 
     try:
-        with httpx.Client(timeout=60) as client:
-            response = client.post(
-                "https://api.openai.com/v1/chat/completions",
-                headers=headers,
-                json=payload,
+        response = post_chat_completion(payload, headers=headers, action="问题摘要翻译")
+        if response.status_code == 429:
+            safe_print(
+                "WARNING: OpenAI API 额度不足或账单不可用，问题摘要中文列将留空。",
+                stream=sys.stderr,
             )
-            if response.status_code == 429:
-                safe_print(
-                    "WARNING: OpenAI API 额度不足或账单不可用，问题摘要中文列将留空。",
-                    stream=sys.stderr,
-                )
-                return [""] * len(values)
-            response.raise_for_status()
-        content = response.json()["choices"][0]["message"]["content"].strip()
-        translated = json.loads(strip_code_fence(content))
+            return [""] * len(values)
+        if response.status_code >= 400:
+            safe_print(
+                f"WARNING: {format_api_error(response, '问题摘要翻译')}",
+                stream=sys.stderr,
+            )
+            return [""] * len(values)
+        response.raise_for_status()
+        response_data = response.json()
+        content = response_message_text(response_data)
+        translated = json.loads(extract_json_array(content))
         if isinstance(translated, list) and len(translated) == len(values):
             return [str(item) for item in translated]
     except Exception as exc:  # noqa: BLE001
@@ -944,6 +998,268 @@ def strip_code_fence(value: str) -> str:
     return text.strip()
 
 
+def extract_json_array(value: str) -> str:
+    text = strip_code_fence(value)
+    text = re.sub(r"<think>.*?</think>", "", text, flags=re.I | re.S).strip()
+    if text.startswith("[") and text.endswith("]"):
+        return text
+
+    start = text.find("[")
+    end = text.rfind("]")
+    if start != -1 and end != -1 and end > start:
+        return text[start : end + 1]
+
+    preview = re.sub(r"\s+", " ", text)[:500]
+    raise ValueError(f"API 返回内容不是 JSON 数组，无法解析。返回开头: {preview or '<empty>'}")
+
+
+def parse_semantic_items(content: str, rows: list[dict]) -> list[dict]:
+    json_text = extract_json_array(content)
+    try:
+        parsed = json.loads(json_text)
+        if isinstance(parsed, list):
+            return [item for item in parsed if isinstance(item, dict)]
+    except json.JSONDecodeError:
+        recovered = recover_semantic_items(json_text)
+        if recovered:
+            safe_print(
+                "WARNING: API 返回的 JSON 格式不标准，已用宽松解析恢复本批结果。",
+                stream=sys.stderr,
+            )
+            return recovered
+
+    preview = re.sub(r"\s+", " ", json_text)[:500]
+    safe_print(
+        f"WARNING: API 返回结果无法解析，本批 {len(rows)} 条将标记为 Other。返回开头: {preview}",
+        stream=sys.stderr,
+    )
+    return [
+        {
+            "id": row["id"],
+            "primary": "Other",
+            "secondary": "Please add comments",
+            "reason": "API 返回格式异常，未能稳定解析分类结果",
+        }
+        for row in rows
+    ]
+
+
+def recover_semantic_items(json_text: str) -> list[dict]:
+    recovered: list[dict] = []
+    for obj_text in re.findall(r"\{.*?\}", json_text, flags=re.S):
+        id_match = re.search(r'"id"\s*:\s*(\d+)', obj_text)
+        primary_match = re.search(r'"primary"\s*:\s*"([^"]*)"', obj_text)
+        secondary_match = re.search(r'"secondary"\s*:\s*"([^"]*)"', obj_text)
+        reason_match = re.search(r'"reason"\s*:\s*"(.*)"\s*$', obj_text.strip()[:-1], flags=re.S)
+        if not (id_match and primary_match and secondary_match):
+            continue
+        recovered.append(
+            {
+                "id": int(id_match.group(1)),
+                "primary": primary_match.group(1).strip(),
+                "secondary": secondary_match.group(1).strip(),
+                "reason": clean_recovered_json_string(reason_match.group(1)) if reason_match else "API 返回格式已修复",
+            }
+        )
+    return recovered
+
+
+def clean_recovered_json_string(value: str) -> str:
+    return (
+        value.replace('\\"', '"')
+        .replace("\\n", " ")
+        .replace("\\r", " ")
+        .replace("\\t", " ")
+        .strip()
+    )
+
+
+def response_message_text(response_data: dict) -> str:
+    choices = response_data.get("choices") or []
+    if not choices:
+        raise ValueError(f"API 返回中没有 choices。返回内容: {preview_json(response_data)}")
+
+    choice = choices[0]
+    message = choice.get("message") or {}
+    content = message.get("content")
+    if isinstance(content, str) and content.strip():
+        return content.strip()
+    if isinstance(content, list):
+        text_parts = [
+            str(part.get("text", ""))
+            for part in content
+            if isinstance(part, dict) and part.get("type") in {"text", "output_text"}
+        ]
+        text = "\n".join(part for part in text_parts if part.strip()).strip()
+        if text:
+            return text
+
+    diagnostics = {
+        "finish_reason": choice.get("finish_reason"),
+        "message_keys": sorted(message.keys()),
+        "usage": response_data.get("usage"),
+    }
+    raise ValueError(
+        "API 返回正文为空，可能是输出 token 上限太低或模型只返回了 thinking。"
+        f"诊断信息: {preview_json(diagnostics)}"
+    )
+
+
+def post_chat_completion(payload: dict, *, headers: dict[str, str], action: str) -> httpx.Response:
+    timeout_seconds = read_int_env("REVIEW_ANALYSIS_API_TIMEOUT_SECONDS", default=240, minimum=30, maximum=900)
+    retries = read_int_env("REVIEW_ANALYSIS_API_RETRIES", default=3, minimum=1, maximum=8)
+    last_error: Exception | None = None
+
+    for attempt in range(1, retries + 1):
+        try:
+            with httpx.Client(timeout=timeout_seconds) as client:
+                return client.post(
+                    chat_completions_url(),
+                    headers=headers,
+                    json=payload,
+                )
+        except httpx.TimeoutException as exc:
+            last_error = exc
+            if attempt >= retries:
+                break
+            wait_seconds = min(10 * attempt, 30)
+            safe_print(
+                f"WARNING: {action} API 第 {attempt}/{retries} 次请求超时，"
+                f"{wait_seconds} 秒后重试...",
+                stream=sys.stderr,
+            )
+            time.sleep(wait_seconds)
+
+    raise RuntimeError(f"{action} API 请求超时，已重试 {retries} 次。最后错误: {last_error}")
+
+
+def semantic_cache_path() -> Path:
+    return OUTPUT_DIR / "review_semantic_cache.json"
+
+
+def load_semantic_cache() -> dict[str, list[str]]:
+    path = semantic_cache_path()
+    if not path.exists():
+        return {}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        if isinstance(data, dict):
+            return {
+                str(key): value
+                for key, value in data.items()
+                if isinstance(value, list) and len(value) >= 2
+            }
+    except Exception as exc:  # noqa: BLE001
+        safe_print(f"WARNING: 读取语义分类缓存失败，将忽略缓存: {exc}", stream=sys.stderr)
+    return {}
+
+
+def save_semantic_cache(cache: dict[str, list[str]]) -> None:
+    path = semantic_cache_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(cache, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+
+
+def translation_cache_path() -> Path:
+    return OUTPUT_DIR / "review_translation_cache.json"
+
+
+def load_translation_cache() -> dict[str, str]:
+    path = translation_cache_path()
+    if not path.exists():
+        return {}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        if isinstance(data, dict):
+            return {str(key): str(value) for key, value in data.items()}
+    except Exception as exc:  # noqa: BLE001
+        safe_print(f"WARNING: 读取摘要翻译缓存失败，将忽略缓存: {exc}", stream=sys.stderr)
+    return {}
+
+
+def save_translation_cache(cache: dict[str, str]) -> None:
+    path = translation_cache_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(cache, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+
+
+def review_cache_key(row: dict) -> str:
+    raw = str(row.get("cache_id") or "")
+    if not raw:
+        payload = {
+            key: row.get(key, "")
+            for key in ["model", "channel", "rating", "date", "title", "review", "summary"]
+        }
+        raw = json.dumps(payload, ensure_ascii=False, sort_keys=True)
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
+def text_cache_key(value: str) -> str:
+    normalized = re.sub(r"\s+", " ", str(value)).strip()
+    return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
+
+
+def make_review_stable_id(row: pd.Series) -> str:
+    parts = [
+        str(row.get("机型ID", "")),
+        str(row.get("来源站点", "")),
+        str(row.get("来源URL", "")),
+        str(row.get("评分", "")),
+        str(row.get("评论日期", "")),
+        str(row.get("用户", "")),
+        normalize_cache_text(row.get("标题", "")),
+        normalize_cache_text(row.get("评论内容", "")),
+    ]
+    return "|".join(parts)
+
+
+def normalize_cache_text(value) -> str:
+    if pd.isna(value):
+        return ""
+    return re.sub(r"\s+", " ", str(value)).strip()
+
+
+def preview_json(value) -> str:
+    text = json.dumps(value, ensure_ascii=False, default=str)
+    return text if len(text) <= 800 else text[:797] + "..."
+
+
+def chat_completions_url() -> str:
+    base_url = (
+        os.getenv("OPENAI_BASE_URL")
+        or os.getenv("OPENAI_API_BASE_URL")
+        or "https://api.openai.com/v1"
+    ).strip()
+    return f"{base_url.rstrip('/')}/chat/completions"
+
+
+def format_api_error(response: httpx.Response, action: str) -> str:
+    detail = response.text.strip()
+    if len(detail) > 800:
+        detail = detail[:797] + "..."
+    return (
+        f"{action} API 请求失败：HTTP {response.status_code} {response.reason_phrase}; "
+        f"URL={response.request.url}; 返回内容={detail or '<empty>'}"
+    )
+
+
+def read_int_env(name: str, *, default: int, minimum: int, maximum: int) -> int:
+    raw_value = os.getenv(name, "").strip()
+    if not raw_value:
+        return default
+    try:
+        value = int(raw_value)
+    except ValueError:
+        return default
+    return max(minimum, min(maximum, value))
+
+
 def chunked(values: list[str], size: int):
     for start in range(0, len(values), size):
         yield values[start : start + size]
@@ -951,6 +1267,7 @@ def chunked(values: list[str], size: int):
 
 def write_analysis(
     df: pd.DataFrame,
+    all_reviews: pd.DataFrame,
     output_path: Path,
     source_path: Path,
     dedupe_stats: dict[str, int],
@@ -967,36 +1284,21 @@ def write_analysis(
             empty.to_excel(writer, sheet_name="无低分评论", index=False)
             return
 
-        overview_rows = []
+        total_reviews_by_model = all_reviews.groupby("机型ID", sort=False).size().to_dict()
+        all_reviews_by_model = {
+            model_id: model_df.copy()
+            for model_id, model_df in all_reviews.groupby("机型ID", sort=False)
+        }
         for model_id, model_df in df.groupby("机型ID", sort=False):
-            total = len(model_df)
-            for category, count in Counter(model_df["问题分类"]).most_common():
-                overview_rows.append(
-                    {
-                        "机型ID": model_id,
-                        "问题分类": category,
-                        "问题数": count,
-                        "问题占比": count / total if total else 0,
-                        "低分评论总数": total,
-                    }
-                )
-        overview = pd.DataFrame(overview_rows)
-        overview_start_row = 5
-        dedupe_summary = pd.DataFrame(
-            [
-                ["来源文件", source_path.name],
-                ["分类表", category_path.name if category_path else "内置兜底规则"],
-                ["原始评论数", dedupe_stats["original_count"]],
-                ["去重后评论数", dedupe_stats["deduped_count"]],
-                ["去掉重复评论数", dedupe_stats["removed_count"]],
-            ],
-            columns=["项目", "值"],
-        )
-        dedupe_summary.to_excel(writer, sheet_name="汇总", index=False, startrow=0)
-        overview.to_excel(writer, sheet_name="汇总", index=False, startrow=overview_start_row)
-
-        for model_id, model_df in df.groupby("机型ID", sort=False):
-            write_model_sheet(writer, str(model_id), model_df, source_path, issue_rules)
+            write_model_sheet(
+                writer,
+                str(model_id),
+                model_df,
+                all_reviews_by_model.get(model_id, pd.DataFrame()),
+                source_path,
+                issue_rules,
+                total_reviews_by_model.get(model_id, len(model_df)),
+            )
 
         format_workbook(writer.book)
 
@@ -1005,8 +1307,10 @@ def write_model_sheet(
     writer: pd.ExcelWriter,
     model_id: str,
     model_df: pd.DataFrame,
+    all_model_reviews: pd.DataFrame,
     source_path: Path,
     issue_rules: list[tuple[str, list[str]]],
+    total_reviews_all_ratings: int,
 ) -> None:
     total = len(model_df)
     counts = Counter(model_df["问题分类"])
@@ -1045,16 +1349,72 @@ def write_model_sheet(
     )[detail_cols]
 
     sheet_name = safe_sheet_name(model_id)
+    channel_metrics = build_channel_metrics_table(all_model_reviews)
     header = pd.DataFrame(
         [
             [f"{model_id} 低分评论问题分析"],
             [f"来源文件: {source_path.name}"],
+            [f"总评论数（1-5星）: {total_reviews_all_ratings}"],
             [f"3星及以下评论数: {total}"],
         ]
     )
+    metrics_title = pd.DataFrame([["渠道评分与评论数"]])
+    summary_title = pd.DataFrame([["低分问题分类汇总"]])
     header.to_excel(writer, sheet_name=sheet_name, index=False, header=False, startrow=0)
-    summary.to_excel(writer, sheet_name=sheet_name, index=False, startrow=4)
-    details.to_excel(writer, sheet_name=sheet_name, index=False, startrow=7 + len(summary))
+    metrics_title.to_excel(writer, sheet_name=sheet_name, index=False, header=False, startrow=5)
+    channel_metrics.to_excel(writer, sheet_name=sheet_name, index=False, startrow=6)
+    summary_start = 9 + len(channel_metrics)
+    summary_title.to_excel(writer, sheet_name=sheet_name, index=False, header=False, startrow=summary_start)
+    summary.to_excel(writer, sheet_name=sheet_name, index=False, startrow=summary_start + 1)
+    details.to_excel(writer, sheet_name=sheet_name, index=False, startrow=summary_start + 4 + len(summary))
+
+
+def build_channel_metrics_table(all_model_reviews: pd.DataFrame) -> pd.DataFrame:
+    columns = ["渠道", "尺寸", "总评分", "评论数"]
+    if all_model_reviews.empty:
+        return pd.DataFrame(columns=columns)
+
+    reviews = all_model_reviews.copy()
+    reviews["_rating_num"] = reviews["评分"].map(parse_rating) if "评分" in reviews.columns else None
+    reviews["_overall_rating_num"] = reviews["整体评分"].map(parse_rating) if "整体评分" in reviews.columns else None
+    reviews["_size_display"] = reviews.apply(extract_size, axis=1)
+    channel = reviews["Channel"].fillna("").astype(str).str.upper() if "Channel" in reviews.columns else pd.Series("", index=reviews.index)
+    rows = []
+
+    amz = reviews[channel.eq("AMZ")]
+    if not amz.empty:
+        rows.append(
+            {
+                "渠道": "AMZ",
+                "尺寸": "全部",
+                "总评分": overall_or_average_rating(amz),
+                "评论数": len(amz),
+            }
+        )
+
+    bby = reviews[channel.eq("BBY")]
+    if not bby.empty:
+        for size, size_df in bby.groupby("_size_display", sort=False):
+            rows.append(
+                {
+                    "渠道": "BBY",
+                    "尺寸": size or "未知",
+                    "总评分": overall_or_average_rating(size_df),
+                    "评论数": len(size_df),
+                }
+            )
+
+    return pd.DataFrame(rows, columns=columns)
+
+
+def overall_or_average_rating(df: pd.DataFrame) -> float | None:
+    overall_values = df["_overall_rating_num"].dropna() if "_overall_rating_num" in df.columns else pd.Series(dtype=float)
+    if not overall_values.empty:
+        return round(float(overall_values.iloc[0]), 1)
+    rating_values = df["_rating_num"].dropna() if "_rating_num" in df.columns else pd.Series(dtype=float)
+    if not rating_values.empty:
+        return round(float(rating_values.mean()), 1)
+    return None
 
 
 def representative_keywords(category: str, issue_rules: list[tuple[str, list[str]]]) -> str:
@@ -1080,8 +1440,8 @@ def format_workbook(workbook) -> None:
     title_font = Font(name="Microsoft YaHei", size=14, bold=True, color=hisense_green)
 
     for sheet in workbook.worksheets:
-        sheet.freeze_panes = "A6" if sheet.title != "汇总" else "A2"
-        if sheet.title != "汇总" and sheet.max_column > 1:
+        sheet.freeze_panes = "A7"
+        if sheet.max_column > 1:
             sheet.merge_cells(
                 start_row=1,
                 start_column=1,
@@ -1103,24 +1463,23 @@ def format_workbook(workbook) -> None:
                     cell.fill = header_fill
                     cell.font = header_font
 
-        if sheet.title != "汇总":
-            sheet.cell(row=1, column=1).alignment = Alignment(
-                horizontal="center",
-                vertical="center",
-                wrap_text=True,
-            )
+        sheet.cell(row=1, column=1).alignment = Alignment(
+            horizontal="center",
+            vertical="center",
+            wrap_text=True,
+        )
 
         for column in range(1, sheet.max_column + 1):
             letter = get_column_letter(column)
             if column == 1:
-                sheet.column_dimensions[letter].width = 14 if sheet.title != "汇总" else 16
+                sheet.column_dimensions[letter].width = 14
             else:
                 sheet.column_dimensions[letter].width = column_width(sheet, column)
 
         for row in range(1, sheet.max_row + 1):
             sheet.row_dimensions[row].height = 24
 
-        center_columns_by_header(sheet, {"问题分类", "问题数", "问题占比"})
+        center_columns_by_header(sheet, {"渠道", "尺寸", "总评分", "评论数", "问题分类", "问题数", "问题占比"})
         apply_column_number_formats(sheet)
         apply_analysis_table_borders(sheet, table_border)
 
@@ -1180,7 +1539,7 @@ def apply_column_number_formats(sheet) -> None:
                     for cell in data_cell:
                         if isinstance(cell.value, (int, float)):
                             cell.number_format = "0.0%"
-            elif header in {"问题数", "低分评论总数"}:
+            elif header in {"问题数", "评论数", "低分评论总数"}:
                 for data_cell in sheet.iter_cols(
                     min_col=column,
                     max_col=column,
@@ -1190,7 +1549,7 @@ def apply_column_number_formats(sheet) -> None:
                     for cell in data_cell:
                         if isinstance(cell.value, (int, float)):
                             cell.number_format = "0"
-            elif header == "评分":
+            elif header in {"评分", "总评分"}:
                 for data_cell in sheet.iter_cols(
                     min_col=column,
                     max_col=column,
@@ -1229,6 +1588,10 @@ def is_analysis_header_cell(value) -> bool:
         "问题数",
         "问题占比",
         "代表关键词",
+        "渠道",
+        "尺寸",
+        "总评分",
+        "评论数",
         "机型ID",
         "机型名称",
         "Channel",
