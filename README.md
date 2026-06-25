@@ -112,7 +112,20 @@ review-scraper run --site bestbuy
 如果已经配置好 API Key，并希望执行后自动完成“网上抓评论 → 1-3 星低分语义分类 → 生成最终报告”，可直接运行：
 
 ```powershell
+cd "C:\Users\jikai\Documents\Codex\2026-06-08\files-mentioned-by-the-user-rar\爬虫"
 python scripts/run_full_workflow.py -o data/output/review_issue_analysis_latest.xlsx
+```
+
+它会自动完成：
+
+```text
+抓取网评 → AI分析1-3星低分评论 → 输出最终报告
+```
+
+最终报告位置：
+
+```text
+data/output/review_issue_analysis_latest.xlsx
 ```
 
 只跑某个机型或站点：
