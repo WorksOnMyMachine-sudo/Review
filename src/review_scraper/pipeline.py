@@ -6,7 +6,8 @@ from rich.console import Console
 
 from review_scraper.amazon_auth import ensure_amazon_session, resolve_state_path
 from review_scraper.config import AppConfig, iter_scrape_targets, load_config
-from review_scraper.export.excel import export_reviews_to_excel
+from review_scraper.config import project_root
+from review_scraper.export.excel import export_reviews_to_excel, merge_reviews_to_excel
 from review_scraper.models import ReviewRecord
 from review_scraper.scrapers.registry import get_scraper
 
@@ -19,6 +20,8 @@ def run_scrape(
     model_filter: str | None = None,
     site_filter: str | None = None,
     output_filename: str | None = None,
+    incremental: bool = False,
+    incremental_path: Path | None = None,
 ) -> Path:
     config = load_config(config_path)
     targets = iter_scrape_targets(config)
@@ -52,6 +55,14 @@ def run_scrape(
             force_manual_setup=False,
         )
 
+    if incremental:
+        output_path = incremental_path or (project_root() / "data" / "output" / "reviews_incremental.xlsx")
+        if not output_path.is_absolute():
+            output_path = project_root() / output_path
+        console.print(f"[green]递进模式[/green]: 新评论会合并到 {output_path}")
+    else:
+        output_path = Path()
+
     all_records: list[ReviewRecord] = []
     for model, site_name, site_target in targets:
         console.print(
@@ -61,7 +72,11 @@ def run_scrape(
         try:
             records = _scrape_target(scraper, model, site_target)
             console.print(f"  → 获取 {len(records)} 条评论")
-            all_records.extend(records)
+            if incremental:
+                _, added, total = merge_reviews_to_excel(records, output_path=output_path)
+                console.print(f"  → 新增 {added} 条，累计 {total} 条（已保存）")
+            else:
+                all_records.extend(records)
         except Exception as exc:  # noqa: BLE001
             if _is_amazon_site(site_name) and _looks_like_amazon_auth_error(exc):
                 console.print(
@@ -79,13 +94,21 @@ def run_scrape(
                     scraper = get_scraper(site_name, config.defaults)
                     records = _scrape_target(scraper, model, site_target)
                     console.print(f"  → 重新登录后获取 {len(records)} 条评论")
-                    all_records.extend(records)
+                    if incremental:
+                        _, added, total = merge_reviews_to_excel(records, output_path=output_path)
+                        console.print(f"  → 新增 {added} 条，累计 {total} 条（已保存）")
+                    else:
+                        all_records.extend(records)
                     continue
                 except Exception as retry_exc:  # noqa: BLE001
                     console.print(f"  [red]重新登录后仍失败[/red]: {retry_exc}")
                     continue
 
             console.print(f"  [red]失败[/red]: {exc}")
+
+    if incremental:
+        console.print(f"\n[green]递进更新完成[/green]: {output_path}")
+        return output_path
 
     output = export_reviews_to_excel(all_records, filename=output_filename)
     console.print(f"\n[green]已导出 Excel[/green]: {output}")

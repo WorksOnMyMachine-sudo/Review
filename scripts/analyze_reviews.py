@@ -305,13 +305,13 @@ def parse_args() -> argparse.Namespace:
         "--input",
         "-i",
         type=Path,
-        help="Input review Excel. Defaults to the latest reviews_*.xlsx in data/output.",
+        help="Input review Excel. Defaults to data/output/reviews_incremental.xlsx.",
     )
     parser.add_argument(
         "--output",
         "-o",
         type=Path,
-        help="Output analysis Excel. Defaults to data/output/review_issue_analysis_<timestamp>.xlsx.",
+        help="Output analysis Excel. Defaults to data/output/review_issue_analysis_latest.xlsx.",
     )
     parser.add_argument(
         "--category-file",
@@ -343,6 +343,10 @@ def resolve_input(path: Path | None) -> Path:
             raise FileNotFoundError(path)
         return path
 
+    incremental_path = OUTPUT_DIR / "reviews_incremental.xlsx"
+    if incremental_path.exists():
+        return incremental_path
+
     candidates = sorted(
         (
             path
@@ -360,8 +364,7 @@ def resolve_input(path: Path | None) -> Path:
 def resolve_output(path: Path | None) -> Path:
     if path:
         return path if path.is_absolute() else ROOT / path
-    stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    return OUTPUT_DIR / f"review_issue_analysis_{stamp}.xlsx"
+    return OUTPUT_DIR / "review_issue_analysis_latest.xlsx"
 
 
 def resolve_template_output(path: Path | None) -> Path:
@@ -1370,7 +1373,7 @@ def write_model_sheet(
 
 
 def build_channel_metrics_table(all_model_reviews: pd.DataFrame) -> pd.DataFrame:
-    columns = ["渠道", "尺寸", "总评分", "评论数"]
+    columns = ["渠道", "尺寸", "机型名称", "总评分", "评论数"]
     if all_model_reviews.empty:
         return pd.DataFrame(columns=columns)
 
@@ -1387,6 +1390,7 @@ def build_channel_metrics_table(all_model_reviews: pd.DataFrame) -> pd.DataFrame
             {
                 "渠道": "AMZ",
                 "尺寸": "全部",
+                "机型名称": display_model_name(amz),
                 "总评分": overall_or_average_rating(amz),
                 "评论数": len(amz),
             }
@@ -1399,12 +1403,24 @@ def build_channel_metrics_table(all_model_reviews: pd.DataFrame) -> pd.DataFrame
                 {
                     "渠道": "BBY",
                     "尺寸": size or "未知",
+                    "机型名称": display_model_name(size_df),
                     "总评分": overall_or_average_rating(size_df),
                     "评论数": len(size_df),
                 }
             )
 
     return pd.DataFrame(rows, columns=columns)
+
+
+def display_model_name(df: pd.DataFrame) -> str:
+    for column in ("机型名称", "机型ID"):
+        if column not in df.columns:
+            continue
+        values = df[column].dropna().astype(str).str.strip()
+        values = values[values.ne("")]
+        if not values.empty:
+            return values.iloc[0]
+    return ""
 
 
 def overall_or_average_rating(df: pd.DataFrame) -> float | None:
@@ -1479,7 +1495,7 @@ def format_workbook(workbook) -> None:
         for row in range(1, sheet.max_row + 1):
             sheet.row_dimensions[row].height = 24
 
-        center_columns_by_header(sheet, {"渠道", "尺寸", "总评分", "评论数", "问题分类", "问题数", "问题占比"})
+        center_columns_by_header(sheet, {"渠道", "尺寸", "机型名称", "总评分", "评论数", "问题分类", "问题数", "问题占比"})
         apply_column_number_formats(sheet)
         apply_analysis_table_borders(sheet, table_border)
 

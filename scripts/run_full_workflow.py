@@ -20,7 +20,16 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run scrape first, then AI analysis report.")
     parser.add_argument("--model", "-m", help="只爬取并分析指定机型 model_id 或名称")
     parser.add_argument("--site", "-s", help="只爬取指定站点，如 amazon / bby / wmt")
-    parser.add_argument("--reviews-output", help="抓取结果 Excel 文件名，默认自动生成 reviews_时间.xlsx")
+    parser.add_argument(
+        "--reviews-output",
+        default="data/output/reviews_incremental.xlsx",
+        help="递进累计评论 Excel 路径，默认 data/output/reviews_incremental.xlsx",
+    )
+    parser.add_argument(
+        "--fresh",
+        action="store_true",
+        help="不使用递进累计模式，改为本次运行单独生成 reviews_时间.xlsx",
+    )
     parser.add_argument(
         "--report-output",
         "-o",
@@ -45,13 +54,17 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
-    reviews_output = args.reviews_output or f"reviews_{datetime.now():%Y%m%d_%H%M%S}.xlsx"
+    reviews_output = args.reviews_output
+    if args.fresh:
+        reviews_output = f"reviews_{datetime.now():%Y%m%d_%H%M%S}.xlsx"
 
     print("STEP 1/2: 开始抓取网评...")
     reviews_path = run_scrape(
         model_filter=args.model,
         site_filter=args.site,
         output_filename=reviews_output,
+        incremental=not args.fresh,
+        incremental_path=Path(reviews_output) if not args.fresh else None,
     )
     print(f"REVIEWS_OUTPUT: {reviews_path}")
 
