@@ -210,6 +210,49 @@ API 模式会直接生成最终分析报告，无需再执行“导出模板 →
 
 API 返回结果还会写入简短的 `分类理由`，方便人工复核。
 
+## 启动可视化看板
+
+看板读取固定的累计数据文件：
+
+```text
+data/output/reviews_incremental.xlsx
+data/output/review_issue_analysis_latest.xlsx
+```
+
+每次启动看板，先进入项目目录：
+
+```powershell
+cd "E:\Work @ US R&D\产品网评&call log\网评\爬虫工具\爬虫手动登录_v6\爬虫"
+```
+
+只给本机使用时：
+
+```powershell
+python -m streamlit run scripts/app_dashboard.py
+```
+
+自己电脑打开：
+
+```text
+http://localhost:8501
+```
+
+如果需要同一局域网里的其他电脑访问，用下面方式启动：
+
+```powershell
+python -m streamlit run scripts/app_dashboard.py --server.address 0.0.0.0 --server.port 8501
+```
+
+然后让对方访问你的电脑 IP，例如：
+
+```text
+http://10.0.5.3:8501
+```
+
+关闭看板：在运行 Streamlit 的 PowerShell 窗口按 `Ctrl + C`，或者直接关闭该 PowerShell 窗口。电脑关机、重启、睡眠，或者 IP 变化后，别人也会访问不到。
+
+注意：Streamlit 默认没有登录鉴权。局域网访问只建议临时分享给可信同事，不要做公网端口映射，也不要把 `.env` 或 API key 放到页面里展示。
+
 ## Excel 列说明
 
 | 列名 | 说明 |

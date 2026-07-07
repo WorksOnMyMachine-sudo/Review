@@ -268,6 +268,28 @@ def download_excel_button(label: str, df: pd.DataFrame, filename: str) -> None:
     )
 
 
+def styled_table(df: pd.DataFrame) -> pd.io.formats.style.Styler:
+    return df.style.set_table_styles(
+        [
+            {
+                "selector": "th",
+                "props": [
+                    ("background-color", "#17324d"),
+                    ("color", "#ffffff"),
+                    ("font-weight", "700"),
+                    ("border-color", "#d8e2e7"),
+                ],
+            },
+            {
+                "selector": "td",
+                "props": [
+                    ("border-color", "#edf2f4"),
+                ],
+            },
+        ]
+    )
+
+
 def main() -> None:
     st.title("网评分析看板")
 
@@ -288,15 +310,18 @@ def main() -> None:
     tab_overview, tab_issues, tab_reviews, tab_exports = st.tabs(["概览", "问题分析", "评论明细", "导出"])
 
     with tab_overview:
-        left, right = st.columns(2)
-        with left:
-            st.subheader("各机型评论数")
-            model_counts = filtered.groupby("机型ID").size().sort_values(ascending=False)
-            st.bar_chart(model_counts)
-        with right:
-            st.subheader("渠道评论数")
-            channel_counts = filtered.groupby("Channel").size().sort_values(ascending=False)
-            st.bar_chart(channel_counts)
+        st.subheader("各机型不同渠道评论数")
+        channel_by_model = pd.pivot_table(
+            filtered,
+            values="评论内容",
+            index="机型ID",
+            columns="Channel",
+            aggfunc="count",
+            fill_value=0,
+        )
+        channel_by_model["合计"] = channel_by_model.sum(axis=1)
+        channel_by_model = channel_by_model.sort_values("合计", ascending=False)
+        st.dataframe(styled_table(channel_by_model), use_container_width=True)
 
         trend_source = filtered[filtered["周"].astype(bool)].copy()
         model_trend = pd.pivot_table(
@@ -340,11 +365,7 @@ def main() -> None:
                     .sort_values("问题数", ascending=False)
                 )
                 total_issues = model_table["问题数"].sum()
-                model_table["问题占比"] = (
-                    model_table["问题数"].div(total_issues).fillna(0).map(lambda value: f"{value:.1%}")
-                    if total_issues
-                    else "0.0%"
-                )
+                model_table["问题占比"] = model_table["问题数"].div(total_issues).fillna(0).mul(100) if total_issues else 0
                 issue_tables.append((model_id, model_table))
 
             for row_start in range(0, len(issue_tables), 2):
@@ -352,7 +373,21 @@ def main() -> None:
                 for column, (model_id, model_table) in zip(columns, issue_tables[row_start : row_start + 2]):
                     with column:
                         st.caption(str(model_id))
-                        st.dataframe(model_table, use_container_width=True, hide_index=True)
+                        st.dataframe(
+                            styled_table(model_table),
+                            use_container_width=True,
+                            hide_index=True,
+                            column_config={
+                                "问题分类": st.column_config.TextColumn("问题分类", width="medium"),
+                                "问题数": st.column_config.NumberColumn("问题数", format="%d"),
+                                "问题占比": st.column_config.ProgressColumn(
+                                    "问题占比",
+                                    format="%.1f%%",
+                                    min_value=0,
+                                    max_value=100,
+                                ),
+                            },
+                        )
 
     with tab_issues:
         if summary.empty and filtered_detail.empty:
@@ -371,7 +406,7 @@ def main() -> None:
                     st.subheader("问题分类 Top")
                     st.bar_chart(issue_counts)
                 st.subheader("问题分类汇总")
-                st.dataframe(shown_summary, use_container_width=True, hide_index=True)
+                st.dataframe(styled_table(shown_summary), use_container_width=True, hide_index=True)
 
             if not filtered_detail.empty:
                 st.subheader("低分评论分类明细")
@@ -380,7 +415,7 @@ def main() -> None:
                     for col in ["机型ID", "机型名称", "Channel", "评分", "评论日期", "问题分类", "分类理由", "评论内容", "问题摘要中文"]
                     if col in filtered_detail.columns
                 ]
-                st.dataframe(filtered_detail[display_cols], use_container_width=True, hide_index=True)
+                st.dataframe(styled_table(filtered_detail[display_cols]), use_container_width=True, hide_index=True)
 
     with tab_reviews:
         st.subheader("原始评论明细")
@@ -389,7 +424,7 @@ def main() -> None:
             for col in ["机型ID", "机型名称", "尺寸", "Channel", "评分", "整体评分", "评论日期", "标题", "评论内容", "用户", "来源URL"]
             if col in filtered.columns
         ]
-        st.dataframe(filtered[display_cols], use_container_width=True, hide_index=True)
+        st.dataframe(styled_table(filtered[display_cols]), use_container_width=True, hide_index=True)
 
     with tab_exports:
         st.subheader("导出当前筛选结果")
